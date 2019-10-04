@@ -20,6 +20,9 @@ public:
     void Set(ABO* ot){
         stack = ot;
     }
+    ws::auto_ptr<ABO>& Get(){
+        return stack;
+    }
 private:
     ws::auto_ptr<ABO> stack;
 };
@@ -47,6 +50,8 @@ void t(){
 
     ptrone->Set(ppone.operator->());
     ppone->Set(ptrone.operator->());
+
+    ptrone = ppone->Get();
 
     cout<< "~~~~~~~~~~~~~~~~~~~~~~~~~~"<< endl;
 

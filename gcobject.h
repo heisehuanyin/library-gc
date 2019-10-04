@@ -83,7 +83,7 @@ namespace ws {
     template<typename T>
     class auto_ptr final : public __inner::middle_ptr{
     public:
-        explicit auto_ptr(GCObject* host)
+        explicit auto_ptr(GCObject* host=&default_global_object)
             :__inner::middle_ptr (host){}
 
         explicit auto_ptr(GCObject*host, GCObject* target)
@@ -95,6 +95,7 @@ namespace ws {
         explicit auto_ptr(const auto_ptr<T>& other){
             this->operator=(other);
         }
+
         explicit auto_ptr(const auto_ptr<T> && other){
             this->operator=(other);
         }
