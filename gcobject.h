@@ -56,8 +56,8 @@ namespace ws {
 
 
             virtual middle_ptr &operator=(middle_ptr& other);
-            virtual middle_ptr& operator=(GCObject* target);
-            virtual GCObject* operator->();
+            virtual middle_ptr &operator=(GCObject* target);
+            virtual GCObject *operator->();
 
         private:
             GCObject* object_host;

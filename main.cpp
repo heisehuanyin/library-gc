@@ -7,17 +7,17 @@ using namespace std;
 class ABO : public ws::GCObject{
 public:
     ABO():stack(this){
-        cout << "ABO=================" << endl;
+        cout << "ABO Construct" << endl;
     }
     virtual ~ABO(){
-        cout << "ABO<<<<<<<<<<<<<<<<<<" << endl;
+        cout << "ABO Distroy" << endl;
     }
 
     virtual void print(){
         cout << "MM" << endl;
     }
 
-    void set(ws::auto_ptr<ABO>& ot){
+    void Set(ABO* ot){
         stack = ot;
     }
 private:
@@ -42,15 +42,14 @@ void t(){
     ptrone=new ACO();
     ptrone->print();
 
-    ws::auto_ptr<ABO> p3;
-    p3 = new ABO();
-    ptrone->set(p3);
-    p3->set(ptrone);
+    ws::auto_ptr<ABO> ppone;
+    ppone = new ACO();
 
+    ptrone->Set(ppone.operator->());
+    ppone->Set(ptrone.operator->());
 
-    ws::auto_ptr<ABO> ptrtwo(&ws::default_global_object);
-    ptrtwo = ptrone;
-    ptrtwo->print();
+    cout<< "~~~~~~~~~~~~~~~~~~~~~~~~~~"<< endl;
+
 }
 
 int main()

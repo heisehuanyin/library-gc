@@ -83,13 +83,10 @@ ws::GCObject *ws::__inner::middle_ptr::operator->(){
 }
 
 bool ws::__inner::middle_ptr::circulate_for_loop(ws::GCObject *ins){
-    for(auto item : ins->member_list){
-        if(item != this){
-            return this->circulate_for_loop(item->object_target);
-        }
-        else {
+    for (auto it=ins->member_list.cbegin(); it!=ins->member_list.cend(); it++) {
+        if((*it) == this || ((*it)->object_target!=nullptr &&
+                             circulate_for_loop((*it)->object_target)))
             return true;
-        }
     }
 
     return false;
