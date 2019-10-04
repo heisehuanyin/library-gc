@@ -6,26 +6,56 @@ using namespace std;
 
 class ABO : public ws::GCObject{
 public:
-    void print(){
+    ABO():stack(this){
+        cout << "ABO=================" << endl;
+    }
+    virtual ~ABO(){
+        cout << "ABO<<<<<<<<<<<<<<<<<<" << endl;
+    }
+
+    virtual void print(){
         cout << "MM" << endl;
     }
+
+    void set(ws::auto_ptr<ABO>& ot){
+        stack = ot;
+    }
+private:
+    ws::auto_ptr<ABO> stack;
 };
-class ACO:public ws::GCObject{
+class ACO:public ABO{
 public:
+    ACO(){
+        cout<< "ACO NEW" << endl;
+    }
+    ~ACO(){
+        cout<< "ACO DELETE" << endl;
+    }
+
     void print(){
         cout << "QP" << endl;
     }
 };
 
+void t(){
+    ws::auto_ptr<ABO> ptrone;
+    ptrone=new ACO();
+    ptrone->print();
+
+    ws::auto_ptr<ABO> p3;
+    p3 = new ABO();
+    ptrone->set(p3);
+    p3->set(ptrone);
+
+
+    ws::auto_ptr<ABO> ptrtwo(&ws::default_global_object);
+    ptrtwo = ptrone;
+    ptrtwo->print();
+}
+
 int main()
 {
-    ws::__in_ptr one(ws::default_global_object);
-    ws::auto_ptr<ABO> two(ws::default_global_object);
-    one = new ABO();
-    one->print();
-
-    two = new ABO();
-    two->print();
+    t();
     return 0;
 }
 

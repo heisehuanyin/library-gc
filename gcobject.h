@@ -14,118 +14,76 @@ namespace ws {
     {
         friend __inner::middle_ptr;
     public:
-        explicit GCObject(){}
+        explicit GCObject();
         virtual ~GCObject() = default;
 
     private:
         /**
-         * @brief 记录对指针对象的解引用操作
+         * @brief 记录对引用记录-1操作
          * @param item 指针对象
          */
-        void ws_object_reference_decreasement(__inner::middle_ptr& item){
-            auto it = std::find(pointer_list.cbegin(), pointer_list.cend(), &item);
-            if(it != pointer_list.cend()){
-                pointer_list.remove(&item);
-            }
-
-            if(!pointer_list.size()){
-                delete this;
-            }
-        }
+        void ws_object_reference_decreasement(__inner::middle_ptr& item);
         /**
-         * @brief 记录对指针对象的引用操作
+         * @brief 记录对引用记录+1操作
          * @param item 指针对象
          */
-        void ws_object_reference_increasement(__inner::middle_ptr& item){
-            auto it = std::find(pointer_list.cbegin(), pointer_list.cend(), &item);
-            if(it == pointer_list.cend()){
-                pointer_list.push_back(&item);
-            }
-        }
+        void ws_object_reference_increasement(__inner::middle_ptr& item);
+
         /**
          * @brief 记录对象实例范围中成员指针注册
          * @param item 成员指针
          */
-        void ws_object_register_member(__inner::middle_ptr& item){
-            auto it = std::find(member_list.cbegin(), member_list.cend(), &item);
-            if(it == member_list.cend()){
-                member_list.push_back(&item);
-            }
-        }
+        void ws_object_register_member(__inner::middle_ptr& item);
         /**
          * @brief 记录对象实例范围内成员指针反注册
          * @param item 成员指针
          */
-        void ws_object_unregister_member(__inner::middle_ptr& item){
-            auto it = std::find(member_list.cbegin(), member_list.cend(), &item);
-            if(it != member_list.cend()){
-                member_list.remove(&item);
-            }
-        }
+        void ws_object_unregister_member(__inner::middle_ptr& item);
 
         std::list<__inner::middle_ptr*> pointer_list;
         std::list<__inner::middle_ptr*> member_list;
     };
 
     namespace __inner {
-        class middle_ptr {
+        class middle_ptr
+        {
+            friend GCObject;
         protected:
-            explicit middle_ptr(GCObject* host)
-                :object_host(host),
-                  object_target(nullptr){
-                host->ws_object_register_member(*this);
-            }
-            explicit middle_ptr(GCObject* host, GCObject* target)
-                :middle_ptr(host){
-                this->operator=(target);
-            }
-            virtual ~middle_ptr(){
-                if(object_target != nullptr)
-                    object_target->ws_object_reference_decreasement(*this);
+            explicit middle_ptr(GCObject* host);
+            explicit middle_ptr(GCObject* host, GCObject* target);
+            explicit middle_ptr(const middle_ptr& other);
+            virtual ~middle_ptr();
 
-                object_host->ws_object_unregister_member(*this);
-            }
 
-            middle_ptr(middle_ptr& other){
-                this->operator=(other);
-            }
-            middle_ptr(middle_ptr&& other){
-                this->operator=(other);
-            }
-
-            virtual middle_ptr& operator=(GCObject* target){
-                if(object_target != nullptr)
-                    object_target->ws_object_reference_decreasement(*this);
-
-                object_target = target;
-                object_target->ws_object_reference_increasement(*this);
-
-                return *this;
-            }
-            virtual middle_ptr& operator=(middle_ptr& other){
-                this->object_host = other.object_host;
-                this->object_target = other.object_target;
-
-                return *this;
-            }
-            virtual GCObject* operator->(){
-                if(!object_target){
-                    std::cout << "对nullptr指针进行操作"<< std::endl;
-                    exit(0);
-                }
-                return object_target;
-            }
+            virtual middle_ptr &operator=(middle_ptr& other);
+            virtual middle_ptr& operator=(GCObject* target);
+            virtual GCObject* operator->();
 
         private:
             GCObject* object_host;
             GCObject* object_target;
+
+            /**
+             * @brief 查找实例引用回环
+             * @param ins 实例
+             * @return 引用环指示
+             */
+            bool circulate_for_loop(GCObject *ins);
         };
     }
+
+    /**
+     * @brief 唯一全局对象，适用于非类成员的纯函数中使用智能指针，
+     * 将host参数关联到全局对象指针，仅用于拼凑参数。
+     * 在类内部范围使用的时候直接传递类实例指针（this）作为host。
+     * 这一步很关键，是能否正常进行内存实例管理的关键步骤。
+     */
+    static GCObject default_global_object;
 
     template<typename T>
     class auto_ptr final : public __inner::middle_ptr{
     public:
-        explicit auto_ptr(GCObject* host)
+        explicit auto_ptr(GCObject* host=&default_global_object)
             :__inner::middle_ptr (host){}
 
         explicit auto_ptr(GCObject*host, GCObject* target)
@@ -134,10 +92,10 @@ namespace ws {
         }
         virtual ~auto_ptr() = default;
 
-        auto_ptr(auto_ptr<T>& other){
+        explicit auto_ptr(const auto_ptr<T>& other){
             this->operator=(other);
         }
-        auto_ptr(auto_ptr<T> && other){
+        explicit auto_ptr(const auto_ptr<T> && other){
             this->operator=(other);
         }
 
