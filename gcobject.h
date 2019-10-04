@@ -83,7 +83,7 @@ namespace ws {
     template<typename T>
     class auto_ptr final : public __inner::middle_ptr{
     public:
-        explicit auto_ptr(GCObject* host=&default_global_object)
+        explicit auto_ptr(GCObject* host)
             :__inner::middle_ptr (host){}
 
         explicit auto_ptr(GCObject*host, GCObject* target)

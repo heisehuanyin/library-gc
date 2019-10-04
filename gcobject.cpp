@@ -6,10 +6,10 @@ void ws::GCObject::ws_object_reference_decreasement(ws::__inner::middle_ptr &ite
     auto it = std::find(pointer_list.cbegin(), pointer_list.cend(), &item);
     if(it != pointer_list.cend()){
         pointer_list.remove(&item);
-    }
 
-    if(!pointer_list.size()){
-        delete this;
+        if(!pointer_list.size()){
+            delete this;
+        }
     }
 }
 

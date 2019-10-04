@@ -38,11 +38,11 @@ public:
 };
 
 void t(){
-    ws::auto_ptr<ABO> ptrone;
+    ws::auto_ptr<ABO> ptrone(&ws::default_global_object);
     ptrone=new ACO();
     ptrone->print();
 
-    ws::auto_ptr<ABO> ppone;
+    ws::auto_ptr<ABO> ppone(&ws::default_global_object);
     ppone = new ACO();
 
     ptrone->Set(ppone.operator->());
