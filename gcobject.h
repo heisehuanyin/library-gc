@@ -1,126 +1,176 @@
 #ifndef GCOBJECT_H
 #define GCOBJECT_H
 
-#include <list>
 #include <iostream>
+#include <thread>
+#include <list>
+#include <map>
 #include <algorithm>
 
 namespace ws {
-    namespace __inner {
-        class middle_ptr;
+    // Pre-DECL
+    namespace internal {
+        class Command;
+        class PointerNew;
+        class PointerDel;
+        class PointerObjectRef;
+        class PointerCancelRef;
+        class ge_ptr;
+        class PeerSymbo;
     }
+    class GC_Object;
 
-    class GCObject
+
+    template<typename T>
+    class BlockingQueue
     {
-        friend __inner::middle_ptr;
     public:
-        explicit GCObject();
-        virtual ~GCObject() = default;
+        explicit BlockingQueue(){}
+        virtual ~BlockingQueue(){}
+
+        void pull(T one){}
+        T take(){}
 
     private:
-        /**
-         * @brief 记录对引用记录-1操作
-         * @param item 指针对象
-         */
-        void ws_object_reference_decreasement(__inner::middle_ptr& item);
-        /**
-         * @brief 记录对引用记录+1操作
-         * @param item 指针对象
-         */
-        void ws_object_reference_increasement(__inner::middle_ptr& item);
-
-        /**
-         * @brief 记录对象实例范围中成员指针注册
-         * @param item 成员指针
-         */
-        void ws_object_register_member(__inner::middle_ptr& item);
-        /**
-         * @brief 记录对象实例范围内成员指针反注册
-         * @param item 成员指针
-         */
-        void ws_object_unregister_member(__inner::middle_ptr& item);
-
-        std::list<__inner::middle_ptr*> pointer_list;
-        std::list<__inner::middle_ptr*> member_list;
+        std::list<T> con;
     };
 
-    namespace __inner {
-        class middle_ptr
-        {
-            friend GCObject;
-        protected:
-            explicit middle_ptr(GCObject* host);
-            explicit middle_ptr(GCObject* host, GCObject* target);
-            explicit middle_ptr(const middle_ptr& other);
-            virtual ~middle_ptr();
+    namespace internal {
+        class Command{
+        public:
+            enum Type{
+                POINTER_NEW,
+                POINTER_DEL,
+                POINTER_OBJECTREF,
+                POINTER_CANCELREF
+            };
+            explicit Command(Type type, ge_ptr* ptr, GC_Object* host);
+            virtual ~Command() = default;
 
-
-            virtual middle_ptr &operator=(middle_ptr& other);
-            virtual middle_ptr &operator=(GCObject* target);
-            virtual GCObject *operator->();
+            Type getType();
+            GC_Object* hostPointer();
+            ge_ptr* ptrPointer();
 
         private:
-            GCObject* object_host;
-            GCObject* object_target;
+            Type type;
+            GC_Object*const host_ptr;
+            ge_ptr* ptr;
+        };
 
-            /**
-             * @brief 查找实例引用回环
-             * @param ins 实例
-             * @return 引用环指示
-             */
-            bool circulate_for_loop(GCObject *ins);
+        class PointerNew: public Command{
+        public:
+            explicit PointerNew(GC_Object* host, ge_ptr*ptr);
+            virtual ~PointerNew() = default;
+        };
+
+        class PointerDel: public Command{
+        public:
+            explicit PointerDel(GC_Object* host, ge_ptr*ptr);
+            virtual ~PointerDel() = default;
+        };
+
+        class PointerObjectRef: public Command{
+        public:
+            explicit PointerObjectRef(GC_Object* host, ge_ptr*ptr, GC_Object* target);
+            virtual ~PointerObjectRef() = default;
+
+            GC_Object* targetPointer();
+        private:
+            GC_Object*const target;
+        };
+
+        class PointerCancelRef: public Command{
+        public:
+            explicit PointerCancelRef(GC_Object* host, ge_ptr*ptr, GC_Object* target);
+            virtual ~PointerCancelRef() = default;
+
+            GC_Object* targetPointer();
+        private:
+            GC_Object *const target;
+        };
+
+        class PeerSymbo{
+        public:
+            explicit PeerSymbo(GC_Object* host)
+                :host_object(host){}
+
+            GC_Object*const host_object;
+            std::list<std::pair<internal::ge_ptr*, PeerSymbo*>> members;
+            std::list<internal::ge_ptr*> handlers_record;
+        };
+
+        class ge_ptr{
+        public:
+            explicit ge_ptr(GC_Object* host);
+            ge_ptr(ge_ptr& other);
+            ge_ptr(ge_ptr&& other);
+            virtual ~ge_ptr();
+
+
+            ge_ptr &operator=(GC_Object* target);
+            ge_ptr &operator=(ge_ptr& other);
+            GC_Object *operator->();
+
+        private:
+            GC_Object*const host_ptr;
+            GC_Object* target_ptr;
+            static BlockingQueue<Command*>* queue;
+        };
+
+        class GC_Collect : public std::thread
+        {
+        public:
+            static BlockingQueue<internal::Command*> commands;
+
+            GC_Collect()
+                :thread(fn_collect_calc)
+            {
+                this->detach();
+            }
+            ~GC_Collect() = default;
+
+
+        private:
+            static std::map<GC_Object*, internal::PeerSymbo*> objs_map;
+            static void fn_collect_calc();
         };
     }
 
-    /**
-     * @brief 唯一全局对象，适用于非类成员的纯函数中使用智能指针，
-     * 将host参数关联到全局对象指针，仅用于拼凑参数。
-     * 在类内部范围使用的时候直接传递类实例指针（this）作为host。
-     * 这一步很关键，是能否正常进行内存实例管理的关键步骤。
-     */
-    static GCObject default_global_object;
-
-    template<typename T>
-    class auto_ptr final : public __inner::middle_ptr{
+    class GC_Object{
     public:
-        explicit auto_ptr(GCObject* host=&default_global_object)
-            :__inner::middle_ptr (host){}
-
-        explicit auto_ptr(GCObject*host, GCObject* target)
-            :auto_ptr(host){
-            this->operator=(target);
-        }
-        virtual ~auto_ptr() = default;
-
-        explicit auto_ptr(const auto_ptr<T>& other){
-            this->operator=(other);
-        }
-
-        explicit auto_ptr(const auto_ptr<T> && other){
-            this->operator=(other);
-        }
-
-
-
-        virtual auto_ptr<T>& operator=(GCObject* target){
-            __inner::middle_ptr::operator=(target);
-            return *this;
-        }
-
-        virtual auto_ptr<T>& operator=(auto_ptr& other){
-            __inner::middle_ptr::operator=(other);
-            return *this;
-        }
-
-        virtual T* operator->(){
-            return static_cast<T*>(__inner::middle_ptr::operator->());
-        }
-
+        GC_Object() = default;
+        virtual ~GC_Object() = default;
     };
 
+    template <typename T>
+    class smart_ptr : public internal::ge_ptr
+    {
+    public:
+        explicit smart_ptr(GC_Object* host)
+            :ge_ptr(host) {}
+        smart_ptr(smart_ptr<T>& other)
+            :ge_ptr (other){}
+        smart_ptr(smart_ptr<T>&& rv)
+            :ge_ptr(rv){}
+
+        virtual ~smart_ptr() = default;
 
 
+        smart_ptr<T>& operator=(T* target){
+            ge_ptr::operator=(target);
 
+            return *this;
+        }
+        smart_ptr<T>& operator=(smart_ptr<T>& other){
+            ge_ptr::operator=(other);
+
+            return *this;
+        }
+
+        T* operator->(){
+            return static_cast<T*>(ge_ptr::operator->());
+        }
+    };
 }
 
 #endif // GCOBJECT_H

@@ -1,94 +1,159 @@
 #include "gcobject.h"
 
-ws::GCObject::GCObject(){}
+static ws::internal::GC_Collect worker;
 
-void ws::GCObject::ws_object_reference_decreasement(ws::__inner::middle_ptr &item){
-    auto it = std::find(pointer_list.cbegin(), pointer_list.cend(), &item);
-    if(it != pointer_list.cend()){
-        pointer_list.remove(&item);
+ws::internal::Command::Command(ws::internal::Command::Type type, ws::internal::ge_ptr *ptr, GC_Object *host)
+    :type(type),
+      host_ptr(host),
+      ptr(ptr){}
 
-        if(!pointer_list.size()){
-            delete this;
-        }
-    }
+ws::internal::Command::Type ws::internal::Command::getType(){ return type; }
+
+ws::GC_Object *ws::internal::Command::hostPointer(){ return host_ptr; }
+
+ws::internal::ge_ptr *ws::internal::Command::ptrPointer(){ return ptr; }
+
+ws::internal::PointerNew::PointerNew(GC_Object *host, ws::internal::ge_ptr *ptr)
+    :Command (Type::POINTER_NEW, ptr, host){}
+
+ws::internal::PointerDel::PointerDel(GC_Object *host, ws::internal::ge_ptr *ptr)
+    :Command(Type::POINTER_DEL,ptr, host){}
+
+ws::internal::PointerObjectRef::PointerObjectRef(GC_Object *host, ws::internal::ge_ptr *ptr, GC_Object *target)
+    :Command(Type::POINTER_OBJECTREF, ptr, host),
+      target(target){}
+
+ws::GC_Object *ws::internal::PointerObjectRef::targetPointer(){
+    return target;
 }
 
-void ws::GCObject::ws_object_reference_increasement(ws::__inner::middle_ptr &item){
-    auto it = std::find(pointer_list.cbegin(), pointer_list.cend(), &item);
-    if(it == pointer_list.cend()){
-        pointer_list.push_back(&item);
-    }
+ws::internal::PointerCancelRef::PointerCancelRef(GC_Object *host, ws::internal::ge_ptr *ptr, GC_Object *target)
+    :Command (Type::POINTER_CANCELREF, ptr, host),
+      target(target){}
+
+ws::GC_Object *ws::internal::PointerCancelRef::targetPointer(){
+    return target;
 }
 
-void ws::GCObject::ws_object_register_member(ws::__inner::middle_ptr &item){
-    auto it = std::find(member_list.cbegin(), member_list.cend(), &item);
-    if(it == member_list.cend()){
-        member_list.push_back(&item);
-    }
-}
+ws::BlockingQueue<ws::internal::Command*> ws::internal::GC_Collect::commands = ws::BlockingQueue<ws::internal::Command*>();
+ws::BlockingQueue<ws::internal::Command*>* ws::internal::ge_ptr::queue = &ws::internal::GC_Collect::commands;
 
-void ws::GCObject::ws_object_unregister_member(ws::__inner::middle_ptr &item){
-    auto it = std::find(member_list.cbegin(), member_list.cend(), &item);
-    if(it != member_list.cend()){
-        member_list.remove(&item);
-    }
-}
-
-ws::__inner::middle_ptr::middle_ptr(ws::GCObject *host)
-    :object_host(host),
-      object_target(nullptr){
-    host->ws_object_register_member(*this);
-}
-
-ws::__inner::middle_ptr::middle_ptr(ws::GCObject *host, ws::GCObject *target)
-    :middle_ptr(host){
-    this->operator=(target);
-}
-
-ws::__inner::middle_ptr::middle_ptr(const ws::__inner::middle_ptr &other)
-    :object_target(other.object_target)
+ws::internal::ge_ptr::ge_ptr(GC_Object *host)
+    :host_ptr(host)
 {
-    this->operator=(other.object_target);
+    auto post = new PointerNew(host, this);
+    queue->pull(post);
 }
 
-ws::__inner::middle_ptr::~middle_ptr(){
-    if(object_target != nullptr)
-        object_target->ws_object_reference_decreasement(*this);
-
-    object_host->ws_object_unregister_member(*this);
+ws::internal::ge_ptr::ge_ptr(ws::internal::ge_ptr &other)
+    :ge_ptr(other.host_ptr)
+{
+    this->operator=(other);
 }
 
-ws::__inner::middle_ptr &ws::__inner::middle_ptr::operator=(ws::__inner::middle_ptr &other){
-    return this->operator=(other.object_target);
+ws::internal::ge_ptr::ge_ptr(ws::internal::ge_ptr &&other)
+    :ge_ptr(other.host_ptr)
+{
+    this->operator=(other);
 }
 
-ws::__inner::middle_ptr &ws::__inner::middle_ptr::operator=(ws::GCObject *target){
-    if(object_target != nullptr)
-        object_target->ws_object_reference_decreasement(*this);
+ws::internal::ge_ptr::~ge_ptr(){
+    if(target_ptr){
+        auto post = new PointerCancelRef(host_ptr, this, target_ptr);
+        queue->pull(post);
+    }
 
-    object_target = target;
-    if(!circulate_for_loop(object_target))
-        object_target->ws_object_reference_increasement(*this);
+    auto post = new PointerDel(host_ptr, this);
+    queue->pull(post);
+}
 
+ws::internal::ge_ptr &ws::internal::ge_ptr::operator=(ws::internal::ge_ptr &other){
+    operator=(other.target_ptr);
 
     return *this;
 }
 
-ws::GCObject *ws::__inner::middle_ptr::operator->(){
-    if(!object_target){
-        std::cout << "ERROR::对nullptr指针进行操作"<< std::endl;
-        exit(0);
-    }
-    return object_target;
+ws::GC_Object *ws::internal::ge_ptr::operator->(){
+    return target_ptr;
 }
 
-bool ws::__inner::middle_ptr::circulate_for_loop(ws::GCObject *ins){
-    for (auto it=ins->member_list.cbegin(); it!=ins->member_list.cend(); it++) {
-        if((*it) == this || ((*it)->object_target!=nullptr &&
-                             circulate_for_loop((*it)->object_target)))
-            return true;
+ws::internal::ge_ptr &ws::internal::ge_ptr::operator=(GC_Object *target){
+    if(target_ptr){
+        auto post = new PointerCancelRef(host_ptr, this, target_ptr);
+        queue->pull(post);
     }
 
-    return false;
+    this->target_ptr = target;
+    auto post = new PointerObjectRef(host_ptr, this, target_ptr);
+    queue->pull(post);
+
+    return *this;
 }
 
+bool check_loop(ws::internal::PeerSymbo* item){
+    for (auto it=item->members.cbegin(); it!=item->members.cend();++it) {
+
+    }
+}
+
+void ws::internal::GC_Collect::fn_collect_calc(){
+    while (true) {
+        auto item = commands.take();
+        auto peer_host = objs_map.find(item->hostPointer());
+
+        switch (item->getType()) {
+            case Command::POINTER_NEW:
+                if(peer_host == objs_map.cend()){
+                    auto peersym = new PeerSymbo(item->hostPointer());
+                    objs_map.insert(std::make_pair(item->hostPointer(), peersym));
+
+                    peersym->members.push_back(std::make_pair(item->ptrPointer(), nullptr));
+                }
+                else {
+                    peer_host->second->members.push_back(std::make_pair(item->ptrPointer(), nullptr));
+                }
+                break;
+            case Command::POINTER_DEL:
+                if(peer_host != objs_map.cend()){
+                    auto it = std::find(peer_host->second->members.cbegin(),
+                                        peer_host->second->members.cend(),
+                                        std::make_pair(item->ptrPointer(), nullptr));
+
+                    if(it != peer_host->second->members.cend())
+                        peer_host->second->members.erase(it);
+                }
+                break;
+            case Command::POINTER_OBJECTREF:
+                {
+                    auto caseitem = static_cast<PointerObjectRef*>(item);
+                    auto peer_target = objs_map.find(caseitem->targetPointer());
+                    auto itt = std::find(peer_target->second->handlers_record.cbegin(),
+                                         peer_target->second->handlers_record.cend(),
+                                         caseitem->ptrPointer());
+
+                    if(itt == peer_target->second->handlers_record.cend())
+                        peer_target->second->handlers_record.push_back(caseitem->ptrPointer());
+                }
+                break;
+            case Command::POINTER_CANCELREF:
+                {
+                    auto caseitem = static_cast<PointerObjectRef*>(item);
+                    auto peer_target = objs_map.find(caseitem->targetPointer());
+
+                    auto itt = std::find(peer_target->second->handlers_record.cbegin(),
+                                         peer_target->second->handlers_record.cend(),
+                                         caseitem->ptrPointer());
+
+                    if(itt != peer_target->second->handlers_record.cend()){
+                        peer_target->second->handlers_record.erase(itt);
+                        if(!peer_target->second->handlers_record.size()){
+                             delete peer_target->second->host_object;
+                             delete peer_target->second;
+                             objs_map.erase(peer_target);
+                        }
+                    }
+                }
+                break;
+        }
+    }
+}
