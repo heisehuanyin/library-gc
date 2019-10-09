@@ -3,6 +3,7 @@
 using namespace ws::__internal;
 
 static GC_Worker worker;
+ws::GC_Object ws::default_global;
 
 
 Command::Command(Command::Type type, ws::GC_Object *host)
@@ -20,7 +21,8 @@ std::map<ws::GC_Object*, PeerSymbo*> GC_Worker::objs_map = std::map<ws::GC_Objec
 sync::BlockingQueue<Command*>* ge_ptr::queue = &GC_Worker::commands;
 
 ge_ptr::ge_ptr(ws::GC_Object *host)
-    :host_ptr(host)
+    :host_ptr(host),
+      target_ptr(nullptr)
 {
     auto post = new PointerOver(PointerOver::NEW, host, this);
     queue->push(post);
@@ -48,17 +50,20 @@ ge_ptr::~ge_ptr(){
     queue->push(post);
 }
 
-ge_ptr &ge_ptr::operator=(const ge_ptr &other){
+ge_ptr &ge_ptr::operator=(const ge_ptr &other)
+{
     operator=(other.target_ptr);
 
     return *this;
 }
 
-ws::GC_Object *ge_ptr::operator->(){
+ws::GC_Object *ge_ptr::operator->()
+{
     return target_ptr;
 }
 
-ge_ptr &ge_ptr::operator=(GC_Object *target){
+ge_ptr &ge_ptr::operator=(GC_Object *target)
+{
     if(target_ptr){
         auto post = new PointerRef(PointerRef::CANCEL, host_ptr, this, target_ptr);
         queue->push(post);
@@ -133,17 +138,18 @@ void GC_Worker::run(){
 
                     auto target_it = objs_map.find(caseitem->targetPointer());
                     if(target_it == objs_map.cend()){
-                        objs_map.insert(std::make_pair(caseitem->targetPointer(), new PeerSymbo));
+                        objs_map[caseitem->targetPointer()] = new PeerSymbo;
                         target_it = objs_map.find(caseitem->targetPointer());
                     }
 
+                    std::list<GC_Object*> temp = { host_it->first };
                     auto itt = std::find(target_it->second->ref_records.cbegin(),
                                          target_it->second->ref_records.cend(),
                                          caseitem->pointer());
 
-                    std::list<GC_Object*> temp = {host_it->first};
-                    if(itt == target_it->second->ref_records.cend() &&
-                       !check_loop(temp, host_it->second)){
+                    if(itt == target_it->second->ref_records.cend()){
+                        if(check_loop(temp, host_it->second))
+                            break;
                         target_it->second->ref_records.push_back(caseitem->pointer());
                     }
                 }
@@ -153,8 +159,9 @@ void GC_Worker::run(){
                     auto caseitem = static_cast<PointerRef*>(item);
                     auto target_it = objs_map.find(caseitem->targetPointer());
 
-                    if(target_it == objs_map.cend())
+                    if(target_it == objs_map.cend()){
                         break;
+                    }
 
                     auto itt = std::find(target_it->second->ref_records.cbegin(),
                                          target_it->second->ref_records.cend(),
@@ -186,8 +193,10 @@ void GC_Worker::run(){
                     auto caseitem = static_cast<ObjectOver*>(item);
                     auto object_it = objs_map.find(caseitem->hostObject());
 
-                    if(object_it == objs_map.cend())
-                        break;
+                    if(object_it == objs_map.cend()){
+                        std::cout << "ERROR：出现非法对象指针" << std::endl;
+                        exit(-1);
+                    }
 
                     delete object_it->second;
                     objs_map.erase(object_it);
@@ -202,6 +211,7 @@ bool GC_Worker::check_loop(std::list<GC_Object *> &achor, PeerSymbo *item)
 {
     for (auto it=item->members.cbegin(); it!=item->members.cend();++it) {
         auto object = it->second;
+
         auto itorrrr = std::find(achor.cbegin(), achor.cend(), object);
         if(itorrrr != achor.cend()){
             return true;
@@ -211,9 +221,12 @@ bool GC_Worker::check_loop(std::list<GC_Object *> &achor, PeerSymbo *item)
 
             auto it2 = objs_map.find(object);
             if(it2 != objs_map.cend()){
-                if(check_loop(achor, it2->second))
+                if(check_loop(achor, it2->second)){
                     return true;
+                }
             }
+
+            achor.remove(object);
         }
     }
     return false;

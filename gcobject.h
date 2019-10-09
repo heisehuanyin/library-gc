@@ -51,7 +51,7 @@ namespace ws {
             enum Type{
                 NEW = Command::POINTER_NEW,
                 DEL = Command::POINTER_DEL,
-                REFER = Command::POINTER_OBJECTREF,
+                CONNEC = Command::POINTER_OBJECTREF,
                 CANCAL = Command::POINTER_CANCELREF
             };
             PointerOver(Type type, GC_Object* host, ge_ptr* ptr);
@@ -138,11 +138,13 @@ namespace ws {
         virtual ~GC_Object() = default;
     };
 
+    extern GC_Object default_global;
+
     template <typename T>
     class smart_ptr : public __internal::ge_ptr
     {
     public:
-        explicit smart_ptr(GC_Object* host)
+        explicit smart_ptr(GC_Object* host=&default_global)
             :ge_ptr(host) {}
         smart_ptr(const smart_ptr<T>& other)
             :ge_ptr (other){}
