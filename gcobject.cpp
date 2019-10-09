@@ -1,159 +1,239 @@
 #include "gcobject.h"
 
-static ws::internal::GC_Collect worker;
+using namespace ws::__internal;
 
-ws::internal::Command::Command(ws::internal::Command::Type type, ws::internal::ge_ptr *ptr, GC_Object *host)
+static GC_Worker worker;
+
+
+Command::Command(Command::Type type, ws::GC_Object *host)
     :type(type),
-      host_ptr(host),
-      ptr(ptr){}
+      host_ptr(host){}
 
-ws::internal::Command::Type ws::internal::Command::getType(){ return type; }
+Command::Type Command::commandType(){ return type; }
 
-ws::GC_Object *ws::internal::Command::hostPointer(){ return host_ptr; }
+ws::GC_Object *Command::hostObject(){ return host_ptr; }
 
-ws::internal::ge_ptr *ws::internal::Command::ptrPointer(){ return ptr; }
 
-ws::internal::PointerNew::PointerNew(GC_Object *host, ws::internal::ge_ptr *ptr)
-    :Command (Type::POINTER_NEW, ptr, host){}
+sync::BlockingQueue<Command*>&& GC_Worker::commands = sync::BlockingQueue<Command*>();
+std::map<ws::GC_Object*, PeerSymbo*> GC_Worker::objs_map = std::map<ws::GC_Object*, PeerSymbo*>();
 
-ws::internal::PointerDel::PointerDel(GC_Object *host, ws::internal::ge_ptr *ptr)
-    :Command(Type::POINTER_DEL,ptr, host){}
+sync::BlockingQueue<Command*>* ge_ptr::queue = &GC_Worker::commands;
 
-ws::internal::PointerObjectRef::PointerObjectRef(GC_Object *host, ws::internal::ge_ptr *ptr, GC_Object *target)
-    :Command(Type::POINTER_OBJECTREF, ptr, host),
-      target(target){}
-
-ws::GC_Object *ws::internal::PointerObjectRef::targetPointer(){
-    return target;
-}
-
-ws::internal::PointerCancelRef::PointerCancelRef(GC_Object *host, ws::internal::ge_ptr *ptr, GC_Object *target)
-    :Command (Type::POINTER_CANCELREF, ptr, host),
-      target(target){}
-
-ws::GC_Object *ws::internal::PointerCancelRef::targetPointer(){
-    return target;
-}
-
-ws::BlockingQueue<ws::internal::Command*> ws::internal::GC_Collect::commands = ws::BlockingQueue<ws::internal::Command*>();
-ws::BlockingQueue<ws::internal::Command*>* ws::internal::ge_ptr::queue = &ws::internal::GC_Collect::commands;
-
-ws::internal::ge_ptr::ge_ptr(GC_Object *host)
+ge_ptr::ge_ptr(ws::GC_Object *host)
     :host_ptr(host)
 {
-    auto post = new PointerNew(host, this);
-    queue->pull(post);
+    auto post = new PointerOver(PointerOver::NEW, host, this);
+    queue->push(post);
 }
 
-ws::internal::ge_ptr::ge_ptr(ws::internal::ge_ptr &other)
+ge_ptr::ge_ptr(const ge_ptr &other)
     :ge_ptr(other.host_ptr)
 {
     this->operator=(other);
 }
 
-ws::internal::ge_ptr::ge_ptr(ws::internal::ge_ptr &&other)
+ge_ptr::ge_ptr(ge_ptr &&other)
     :ge_ptr(other.host_ptr)
 {
     this->operator=(other);
 }
 
-ws::internal::ge_ptr::~ge_ptr(){
+ge_ptr::~ge_ptr(){
     if(target_ptr){
-        auto post = new PointerCancelRef(host_ptr, this, target_ptr);
-        queue->pull(post);
+        auto post = new PointerRef(PointerRef::CANCEL, host_ptr, this, target_ptr);
+        queue->push(post);
     }
 
-    auto post = new PointerDel(host_ptr, this);
-    queue->pull(post);
+    auto post = new PointerOver(PointerOver::DEL, host_ptr, this);
+    queue->push(post);
 }
 
-ws::internal::ge_ptr &ws::internal::ge_ptr::operator=(ws::internal::ge_ptr &other){
+ge_ptr &ge_ptr::operator=(const ge_ptr &other){
     operator=(other.target_ptr);
 
     return *this;
 }
 
-ws::GC_Object *ws::internal::ge_ptr::operator->(){
+ws::GC_Object *ge_ptr::operator->(){
     return target_ptr;
 }
 
-ws::internal::ge_ptr &ws::internal::ge_ptr::operator=(GC_Object *target){
+ge_ptr &ge_ptr::operator=(GC_Object *target){
     if(target_ptr){
-        auto post = new PointerCancelRef(host_ptr, this, target_ptr);
-        queue->pull(post);
+        auto post = new PointerRef(PointerRef::CANCEL, host_ptr, this, target_ptr);
+        queue->push(post);
     }
 
     this->target_ptr = target;
-    auto post = new PointerObjectRef(host_ptr, this, target_ptr);
-    queue->pull(post);
+    auto post = new PointerRef(PointerRef::BUILD, host_ptr, this, target_ptr);
+    queue->push(post);
 
     return *this;
 }
 
-bool check_loop(ws::internal::PeerSymbo* item){
-    for (auto it=item->members.cbegin(); it!=item->members.cend();++it) {
-
-    }
+GC_Worker::GC_Worker()
+{
+    this->start();
 }
 
-void ws::internal::GC_Collect::fn_collect_calc(){
+void GC_Worker::run(){
     while (true) {
         auto item = commands.take();
-        auto peer_host = objs_map.find(item->hostPointer());
+        auto host_it = objs_map.find(item->hostObject());
 
-        switch (item->getType()) {
+        switch (item->commandType()) {
             case Command::POINTER_NEW:
-                if(peer_host == objs_map.cend()){
-                    auto peersym = new PeerSymbo(item->hostPointer());
-                    objs_map.insert(std::make_pair(item->hostPointer(), peersym));
+                {
+                    auto caseitem = static_cast<PointerOver*>(item);
 
-                    peersym->members.push_back(std::make_pair(item->ptrPointer(), nullptr));
-                }
-                else {
-                    peer_host->second->members.push_back(std::make_pair(item->ptrPointer(), nullptr));
+                    if(host_it == objs_map.cend()){
+                        auto peersym = new PeerSymbo();
+
+                        objs_map[item->hostObject()] = peersym;
+                        peersym->members.push_back(std::make_pair(caseitem->pointer(), nullptr));
+                    }
+                    else {
+                        host_it->second->members.push_back(std::make_pair(caseitem->pointer(), nullptr));
+                    }
                 }
                 break;
             case Command::POINTER_DEL:
-                if(peer_host != objs_map.cend()){
-                    auto it = std::find(peer_host->second->members.cbegin(),
-                                        peer_host->second->members.cend(),
-                                        std::make_pair(item->ptrPointer(), nullptr));
-
-                    if(it != peer_host->second->members.cend())
-                        peer_host->second->members.erase(it);
-                }
-                break;
-            case Command::POINTER_OBJECTREF:
                 {
-                    auto caseitem = static_cast<PointerObjectRef*>(item);
-                    auto peer_target = objs_map.find(caseitem->targetPointer());
-                    auto itt = std::find(peer_target->second->handlers_record.cbegin(),
-                                         peer_target->second->handlers_record.cend(),
-                                         caseitem->ptrPointer());
+                    auto caseitem = static_cast<PointerOver*>(item);
 
-                    if(itt == peer_target->second->handlers_record.cend())
-                        peer_target->second->handlers_record.push_back(caseitem->ptrPointer());
-                }
-                break;
-            case Command::POINTER_CANCELREF:
-                {
-                    auto caseitem = static_cast<PointerObjectRef*>(item);
-                    auto peer_target = objs_map.find(caseitem->targetPointer());
+                    if(host_it != objs_map.cend()){
+                        for (auto pointer_it = host_it->second->members.cbegin();
+                             pointer_it != host_it->second->members.cend();
+                             ++pointer_it) {
 
-                    auto itt = std::find(peer_target->second->handlers_record.cbegin(),
-                                         peer_target->second->handlers_record.cend(),
-                                         caseitem->ptrPointer());
-
-                    if(itt != peer_target->second->handlers_record.cend()){
-                        peer_target->second->handlers_record.erase(itt);
-                        if(!peer_target->second->handlers_record.size()){
-                             delete peer_target->second->host_object;
-                             delete peer_target->second;
-                             objs_map.erase(peer_target);
+                            if(pointer_it->first == caseitem->pointer())
+                                host_it->second->members.erase(pointer_it);
                         }
                     }
                 }
                 break;
+            case Command::POINTER_OBJECTREF:
+                {
+                    auto caseitem = static_cast<PointerRef*>(item);
+                    auto target_it = objs_map.find(caseitem->targetPointer());
+
+                    if(target_it == objs_map.cend()){
+                        objs_map.insert(std::make_pair(caseitem->targetPointer(), new PeerSymbo));
+                        target_it = objs_map.find(caseitem->targetPointer());
+                    }
+
+                    auto itt = std::find(target_it->second->ref_records.cbegin(),
+                                         target_it->second->ref_records.cend(),
+                                         caseitem->pointer());
+
+                    if(itt == target_it->second->ref_records.cend()){
+                        target_it->second->ref_records.push_back(caseitem->pointer());
+
+                        for (auto ref_assciate_it=host_it->second->members.cbegin();
+                             ref_assciate_it != host_it->second->members.cend();
+                             ++ref_assciate_it)
+                        {
+                            if(ref_assciate_it->first == caseitem->pointer() &&
+                               !check_loop(host_it->first, host_it->second)){
+                                host_it->second->members.insert(ref_assciate_it,
+                                                                std::make_pair(caseitem->pointer(),
+                                                                               caseitem->targetPointer()));
+                                host_it->second->members.erase(ref_assciate_it);
+                                break;
+                            }
+                        }
+                    }
+                }
+                break;
+            case Command::POINTER_CANCELREF:
+                {
+                    auto caseitem = static_cast<PointerRef*>(item);
+                    auto target_it = objs_map.find(caseitem->targetPointer());
+
+                    if(target_it == objs_map.cend())
+                        break;
+
+                    auto itt = std::find(target_it->second->ref_records.cbegin(),
+                                         target_it->second->ref_records.cend(),
+                                         caseitem->pointer());
+
+                    if(itt != target_it->second->ref_records.cend()){
+                        target_it->second->ref_records.erase(itt);
+                        if(!target_it->second->ref_records.size()){
+                            delete target_it->first;
+                            delete target_it->second;
+                            objs_map.erase(target_it);
+                        }
+                    }
+                }
+                break;
+            case Command::OBJECT_NEW:
+                {
+                    auto caseitem = static_cast<ObjectOver*>(item);
+                    auto object_it = objs_map.find(caseitem->hostObject());
+
+                    if(object_it != objs_map.cend())
+                        break;
+
+                    objs_map[caseitem->hostObject()] = new PeerSymbo();
+                }
+                break;
+            case Command::OBJECT_DEL:
+                {
+                    auto caseitem = static_cast<ObjectOver*>(item);
+                    auto object_it = objs_map.find(caseitem->hostObject());
+
+                    if(object_it == objs_map.cend())
+                        break;
+
+                    delete object_it->second;
+                    objs_map.erase(object_it);
+                }
+                break;
+        }
+        delete item;
+    }
+}
+
+bool GC_Worker::check_loop(ws::GC_Object *achor, PeerSymbo *item)
+{
+    for (auto it=item->members.cbegin(); it!=item->members.cend();++it) {
+        auto object = it->second;
+        if(object == achor){
+            return true;
+        }
+        else {
+            auto it2 = objs_map.find(object);
+            if(it2 != objs_map.cend()){
+                if(check_loop(achor, it2->second))
+                    return true;
+            }
         }
     }
+    return false;
+}
+
+PointerOver::PointerOver(PointerOver::Type type, ws::GC_Object *host, ge_ptr *ptr)
+    :Command(static_cast<Command::Type>(type), host),
+      ptr_mark(ptr){}
+
+ge_ptr *PointerOver::pointer()
+{
+    return ptr_mark;
+}
+
+PointerRef::PointerRef(PointerRef::Type type, ws::GC_Object *host, ge_ptr *ptr, ws::GC_Object *target)
+    :PointerOver(static_cast<PointerOver::Type>(type), host, ptr),
+      target(target){}
+
+ws::GC_Object *PointerRef::targetPointer(){
+    return target;
+}
+
+ObjectOver::ObjectOver(ObjectOver::Type type, ws::GC_Object *obj)
+    :Command (static_cast<Command::Type>(type), obj){}
+
+PeerSymbo::PeerSymbo()
+{
+
 }

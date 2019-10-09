@@ -7,9 +7,12 @@
 #include <map>
 #include <algorithm>
 
+#include "../ecosystem/sync.h"
+#include "../ecosystem/excstream.h"
+
 namespace ws {
     // Pre-DECL
-    namespace internal {
+    namespace __internal {
         class Command;
         class PointerNew;
         class PointerDel;
@@ -20,119 +23,112 @@ namespace ws {
     }
     class GC_Object;
 
-
-    template<typename T>
-    class BlockingQueue
-    {
-    public:
-        explicit BlockingQueue(){}
-        virtual ~BlockingQueue(){}
-
-        void pull(T one){}
-        T take(){}
-
-    private:
-        std::list<T> con;
-    };
-
-    namespace internal {
+    namespace __internal {
         class Command{
         public:
             enum Type{
                 POINTER_NEW,
                 POINTER_DEL,
                 POINTER_OBJECTREF,
-                POINTER_CANCELREF
+                POINTER_CANCELREF,
+                OBJECT_NEW,
+                OBJECT_DEL
             };
-            explicit Command(Type type, ge_ptr* ptr, GC_Object* host);
+            explicit Command(Type type, GC_Object* host);
             virtual ~Command() = default;
 
-            Type getType();
-            GC_Object* hostPointer();
-            ge_ptr* ptrPointer();
+            Type commandType();
+            GC_Object* hostObject();
 
         private:
             Type type;
             GC_Object*const host_ptr;
-            ge_ptr* ptr;
         };
 
-        class PointerNew: public Command{
+        class PointerOver: public Command
+        {
         public:
-            explicit PointerNew(GC_Object* host, ge_ptr*ptr);
-            virtual ~PointerNew() = default;
+            enum Type{
+                NEW = Command::POINTER_NEW,
+                DEL = Command::POINTER_DEL,
+                REFER = Command::POINTER_OBJECTREF,
+                CANCAL = Command::POINTER_CANCELREF
+            };
+            PointerOver(Type type, GC_Object* host, ge_ptr* ptr);
+            virtual ~PointerOver() = default;
+
+            ge_ptr *pointer();
+
+        private:
+            ge_ptr*const ptr_mark;
         };
 
-        class PointerDel: public Command{
+        class PointerRef: public PointerOver
+        {
         public:
-            explicit PointerDel(GC_Object* host, ge_ptr*ptr);
-            virtual ~PointerDel() = default;
-        };
-
-        class PointerObjectRef: public Command{
-        public:
-            explicit PointerObjectRef(GC_Object* host, ge_ptr*ptr, GC_Object* target);
-            virtual ~PointerObjectRef() = default;
+            enum Type{
+                BUILD = Command::POINTER_OBJECTREF,
+                CANCEL = Command::POINTER_CANCELREF
+            };
+            PointerRef(Type type, GC_Object* host, ge_ptr* ptr, GC_Object* target);
+            virtual ~PointerRef() = default;
 
             GC_Object* targetPointer();
+
         private:
             GC_Object*const target;
         };
 
-        class PointerCancelRef: public Command{
+        class ObjectOver : public Command
+        {
         public:
-            explicit PointerCancelRef(GC_Object* host, ge_ptr*ptr, GC_Object* target);
-            virtual ~PointerCancelRef() = default;
-
-            GC_Object* targetPointer();
-        private:
-            GC_Object *const target;
+            enum Type{
+                New = Command::OBJECT_NEW,
+                Del = Command::OBJECT_DEL
+            };
+            ObjectOver(Type type, GC_Object* obj);
+            virtual ~ObjectOver() = default;
         };
 
         class PeerSymbo{
         public:
-            explicit PeerSymbo(GC_Object* host)
-                :host_object(host){}
+            explicit PeerSymbo();
 
-            GC_Object*const host_object;
-            std::list<std::pair<internal::ge_ptr*, PeerSymbo*>> members;
-            std::list<internal::ge_ptr*> handlers_record;
+            std::list<std::pair<ge_ptr*, GC_Object*>> members;
+            std::list<ge_ptr*> ref_records;
         };
 
         class ge_ptr{
         public:
             explicit ge_ptr(GC_Object* host);
-            ge_ptr(ge_ptr& other);
+            ge_ptr(const ge_ptr& other);
             ge_ptr(ge_ptr&& other);
             virtual ~ge_ptr();
 
 
             ge_ptr &operator=(GC_Object* target);
-            ge_ptr &operator=(ge_ptr& other);
+            ge_ptr &operator=(const ge_ptr& other);
             GC_Object *operator->();
 
         private:
             GC_Object*const host_ptr;
             GC_Object* target_ptr;
-            static BlockingQueue<Command*>* queue;
+            static sync::BlockingQueue<Command*>* queue;
         };
 
-        class GC_Collect : public std::thread
+        class GC_Worker : exec::Thread
         {
         public:
-            static BlockingQueue<internal::Command*> commands;
+            static sync::BlockingQueue<Command*>&& commands;
 
-            GC_Collect()
-                :thread(fn_collect_calc)
-            {
-                this->detach();
-            }
-            ~GC_Collect() = default;
+            GC_Worker();
+            ~GC_Worker() = default;
 
+            void run();
 
         private:
-            static std::map<GC_Object*, internal::PeerSymbo*> objs_map;
-            static void fn_collect_calc();
+            static std::map<GC_Object*, PeerSymbo*> objs_map;
+            bool check_loop(GC_Object* achor, PeerSymbo* item);
         };
     }
 
@@ -143,12 +139,12 @@ namespace ws {
     };
 
     template <typename T>
-    class smart_ptr : public internal::ge_ptr
+    class smart_ptr : public __internal::ge_ptr
     {
     public:
         explicit smart_ptr(GC_Object* host)
             :ge_ptr(host) {}
-        smart_ptr(smart_ptr<T>& other)
+        smart_ptr(const smart_ptr<T>& other)
             :ge_ptr (other){}
         smart_ptr(smart_ptr<T>&& rv)
             :ge_ptr(rv){}
@@ -156,12 +152,13 @@ namespace ws {
         virtual ~smart_ptr() = default;
 
 
-        smart_ptr<T>& operator=(T* target){
+        smart_ptr<T>& operator=(GC_Object* target)
+        {
             ge_ptr::operator=(target);
 
             return *this;
         }
-        smart_ptr<T>& operator=(smart_ptr<T>& other){
+        smart_ptr<T>& operator=(const smart_ptr<T>& other){
             ge_ptr::operator=(other);
 
             return *this;
