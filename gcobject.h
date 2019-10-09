@@ -128,7 +128,7 @@ namespace ws {
 
         private:
             static std::map<GC_Object*, PeerSymbo*> objs_map;
-            bool check_loop(GC_Object* achor, PeerSymbo* item);
+            bool check_loop(std::list<GC_Object*>& achor, PeerSymbo* item);
         };
     }
 

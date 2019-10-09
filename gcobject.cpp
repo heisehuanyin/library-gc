@@ -115,8 +115,23 @@ void GC_Worker::run(){
             case Command::POINTER_OBJECTREF:
                 {
                     auto caseitem = static_cast<PointerRef*>(item);
-                    auto target_it = objs_map.find(caseitem->targetPointer());
 
+                    for (auto ref_assciate_it=host_it->second->members.cbegin();
+                         ref_assciate_it != host_it->second->members.cend();
+                         ++ref_assciate_it)
+                    {
+                        if(ref_assciate_it->first == caseitem->pointer()){
+                            host_it->second->members.insert(ref_assciate_it,
+                                                            std::make_pair(caseitem->pointer(),
+                                                                           caseitem->targetPointer()));
+
+                            host_it->second->members.erase(ref_assciate_it);
+                            break;
+                        }
+                    }
+
+
+                    auto target_it = objs_map.find(caseitem->targetPointer());
                     if(target_it == objs_map.cend()){
                         objs_map.insert(std::make_pair(caseitem->targetPointer(), new PeerSymbo));
                         target_it = objs_map.find(caseitem->targetPointer());
@@ -126,22 +141,10 @@ void GC_Worker::run(){
                                          target_it->second->ref_records.cend(),
                                          caseitem->pointer());
 
-                    if(itt == target_it->second->ref_records.cend()){
+                    std::list<GC_Object*> temp = {host_it->first};
+                    if(itt == target_it->second->ref_records.cend() &&
+                       !check_loop(temp, host_it->second)){
                         target_it->second->ref_records.push_back(caseitem->pointer());
-
-                        for (auto ref_assciate_it=host_it->second->members.cbegin();
-                             ref_assciate_it != host_it->second->members.cend();
-                             ++ref_assciate_it)
-                        {
-                            if(ref_assciate_it->first == caseitem->pointer() &&
-                               !check_loop(host_it->first, host_it->second)){
-                                host_it->second->members.insert(ref_assciate_it,
-                                                                std::make_pair(caseitem->pointer(),
-                                                                               caseitem->targetPointer()));
-                                host_it->second->members.erase(ref_assciate_it);
-                                break;
-                            }
-                        }
                     }
                 }
                 break;
@@ -195,14 +198,17 @@ void GC_Worker::run(){
     }
 }
 
-bool GC_Worker::check_loop(ws::GC_Object *achor, PeerSymbo *item)
+bool GC_Worker::check_loop(std::list<GC_Object *> &achor, PeerSymbo *item)
 {
     for (auto it=item->members.cbegin(); it!=item->members.cend();++it) {
         auto object = it->second;
-        if(object == achor){
+        auto itorrrr = std::find(achor.cbegin(), achor.cend(), object);
+        if(itorrrr != achor.cend()){
             return true;
         }
         else {
+            achor.push_back(object);
+
             auto it2 = objs_map.find(object);
             if(it2 != objs_map.cend()){
                 if(check_loop(achor, it2->second))
