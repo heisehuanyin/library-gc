@@ -44,6 +44,13 @@ namespace ws {
 
             Type command_type();
 
+            /**
+             * @brief 命令执行反转
+             * @param item 抽象命令
+             * @param map 对象引用图
+             */
+            virtual void exec(Command* item, std::map<void*, PeerSymbo*>& map) = 0;
+
         private:
             Type type;
         };
@@ -65,6 +72,8 @@ namespace ws {
             GC_Object* delegate_object();
             ge_ptr *smart_pointer();
 
+            void exec(Command* item, std::map<void*, PeerSymbo*>& map);
+
         private:
             ge_ptr*const ptr_mark;
             void*const host_ptr;
@@ -83,6 +92,8 @@ namespace ws {
             virtual ~PointerRef() = default;
 
             void* target_pointer();
+
+            void exec(Command* item, std::map<void*, PeerSymbo*>& map);
 
         private:
             void*const target;
@@ -133,10 +144,11 @@ namespace ws {
 
             void run();
 
+            static bool check_loop(std::list<void *> &achor, PeerSymbo* item);
+
         private:
             //       original-ptr  all-managed
             static std::map<void*, PeerSymbo*> objs_map;
-            bool check_loop(std::list<void *> &achor, PeerSymbo* item);
         };
 
         template <typename T>
