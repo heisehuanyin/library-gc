@@ -21,28 +21,31 @@ namespace ws {
         class ge_ptr;
         class PeerSymbo;
     }
-    class GC_Object;
 
     namespace __internal {
+        class GC_Object{
+        public:
+            GC_Object() = default;
+            virtual ~GC_Object() = default;
+
+            virtual void manual_clear() = 0;
+        };
+
         class Command{
         public:
             enum Type{
                 POINTER_NEW,
                 POINTER_DEL,
                 POINTER_OBJECTREF,
-                POINTER_CANCELREF,
-                OBJECT_NEW,
-                OBJECT_DEL
+                POINTER_CANCELREF
             };
-            explicit Command(Type type, GC_Object* host);
+            explicit Command(Type type);
             virtual ~Command() = default;
 
-            Type commandType();
-            GC_Object* hostObject();
+            Type command_type();
 
         private:
             Type type;
-            GC_Object*const host_ptr;
         };
 
         class PointerOver: public Command
@@ -54,13 +57,17 @@ namespace ws {
                 CONNEC = Command::POINTER_OBJECTREF,
                 CANCAL = Command::POINTER_CANCELREF
             };
-            PointerOver(Type type, GC_Object* host, ge_ptr* ptr);
+            PointerOver(Type type, void* host, GC_Object* mgro, ge_ptr* ptr);
             virtual ~PointerOver() = default;
 
-            ge_ptr *pointer();
+            void* host_object();
+            GC_Object* delegate_object();
+            ge_ptr *smart_pointer();
 
         private:
             ge_ptr*const ptr_mark;
+            void*const host_ptr;
+            GC_Object*const mgro;
         };
 
         class PointerRef: public PointerOver
@@ -70,49 +77,42 @@ namespace ws {
                 BUILD = Command::POINTER_OBJECTREF,
                 CANCEL = Command::POINTER_CANCELREF
             };
-            PointerRef(Type type, GC_Object* host, ge_ptr* ptr, GC_Object* target);
+            PointerRef(Type type, void* host, GC_Object* mgro, ge_ptr* ptr, void* target);
             virtual ~PointerRef() = default;
 
-            GC_Object* targetPointer();
+            void* target_pointer();
 
         private:
-            GC_Object*const target;
+            void*const target;
         };
 
-        class ObjectOver : public Command
-        {
-        public:
-            enum Type{
-                New = Command::OBJECT_NEW,
-                Del = Command::OBJECT_DEL
-            };
-            ObjectOver(Type type, GC_Object* obj);
-            virtual ~ObjectOver() = default;
-        };
 
         class PeerSymbo{
         public:
-            explicit PeerSymbo();
+            explicit PeerSymbo()
+                :delegates({}){}
 
-            std::list<std::pair<ge_ptr*, GC_Object*>> members;
+            std::list<GC_Object*> delegates;
+            std::list<std::pair<ge_ptr*, void*>> members;
             std::list<ge_ptr*> ref_records;
         };
 
         class ge_ptr{
         public:
-            explicit ge_ptr(GC_Object* host);
+            explicit ge_ptr(void *host, GC_Object *delegate);
             ge_ptr(const ge_ptr& other);
             ge_ptr(ge_ptr&& other);
             virtual ~ge_ptr();
 
 
-            ge_ptr &operator=(GC_Object* target);
+            ge_ptr &operator=(void* target);
             ge_ptr &operator=(const ge_ptr& other);
-            GC_Object *operator->();
+            void *operator->();
 
         private:
-            GC_Object*const host_ptr;
-            GC_Object* target_ptr;
+            void *const host_ptr;
+            GC_Object *const host_delegate;
+            void * target_ptr;
             static sync::BlockingQueue<Command*>* queue;
         };
 
@@ -127,49 +127,68 @@ namespace ws {
             void run();
 
         private:
-            static std::map<GC_Object*, PeerSymbo*> objs_map;
-            bool check_loop(std::list<GC_Object*>& achor, PeerSymbo* item);
+            //       original-ptr  all-managed
+            static std::map<void*, PeerSymbo*> objs_map;
+            bool check_loop(std::list<void *> &achor, PeerSymbo* item);
+        };
+
+        template <typename T>
+        class GC_Delegate : public GC_Object
+        {
+        public:
+            GC_Delegate(T* host):obj(host){}
+            virtual ~GC_Delegate(){}
+
+            virtual void manual_clear(){
+                if(obj) delete obj;
+            }
+
+        private:
+            T* obj;
         };
     }
 
-    class GC_Object{
-    public:
-        GC_Object() = default;
-        virtual ~GC_Object() = default;
-    };
-
-    extern GC_Object default_global;
+    extern __internal::GC_Delegate<int> global_object;
 
     template <typename T>
-    class smart_ptr : public __internal::ge_ptr
+    class smart_ptr : __internal::ge_ptr
     {
     public:
-        explicit smart_ptr(GC_Object* host=&default_global)
-            :ge_ptr(host) {}
+        template<typename HostType>
+        explicit smart_ptr(HostType* host)
+            :ge_ptr(host, new __internal::GC_Delegate<HostType>(host)) {}
         smart_ptr(const smart_ptr<T>& other)
-            :ge_ptr (other){}
+            :ge_ptr(other){}
         smart_ptr(smart_ptr<T>&& rv)
             :ge_ptr(rv){}
 
         virtual ~smart_ptr() = default;
 
 
-        smart_ptr<T>& operator=(GC_Object* target)
+        smart_ptr<T>& operator=(T* target)
         {
-            ge_ptr::operator=(target);
+            __internal::ge_ptr::operator=(target);
 
             return *this;
         }
         smart_ptr<T>& operator=(const smart_ptr<T>& other){
-            ge_ptr::operator=(other);
+            __internal::ge_ptr::operator=(other);
 
             return *this;
         }
 
         T* operator->(){
-            return static_cast<T*>(ge_ptr::operator->());
+            return static_cast<T*>(__internal::ge_ptr::operator->());
         }
     };
+
+
+    template <typename HostType, typename T>
+    smart_ptr<T> gc_wrap(HostType*host, T* target){
+        auto one = smart_ptr<T>(host);
+        one = target;
+        return one;
+    }
 }
 
 #endif // GCOBJECT_H
