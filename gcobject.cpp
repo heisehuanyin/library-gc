@@ -1,10 +1,10 @@
 #include "gcobject.h"
 
-using namespace ws::__internal;
+using namespace ws::__internal__implement;
 
 static GC_Worker worker;
-static GC_Delegate<int> invilid_node(nullptr);
-GC_Delegate<int> ws::global_object(nullptr);
+static GC_RawWrap<int> invilid_node(nullptr);
+GC_RawWrap<int> ws::global_object(nullptr);
 
 
 Command::Command(Command::Type type)
@@ -17,31 +17,31 @@ Command::Type Command::command_type(){ return type; }
 sync::BlockingQueue<Command*>&& GC_Worker::commands = sync::BlockingQueue<Command*>();
 std::map<void*, PeerSymbo*> GC_Worker::objs_map = std::map<void*, PeerSymbo*>();
 
-sync::BlockingQueue<Command*>* ge_ptr::queue = &GC_Worker::commands;
+sync::BlockingQueue<Command*>* generic_ptr::queue = &GC_Worker::commands;
 
-ge_ptr::ge_ptr(void *host, GC_Object* delegate, GC_Object *delegate2)
+generic_ptr::generic_ptr(void *host, GC_Delegate* delegate_host, GC_Delegate *delegate_target)
     :host_ptr(host),
-      host_delegate(delegate),
+      host_delegate(delegate_host),
       target_ptr(nullptr),
-      target_delegate(delegate2)
+      target_delegate(delegate_target)
 {
     auto post = new PointerOver(PointerOver::NEW, host, host_delegate, this);
     queue->push(post);
 }
 
-ge_ptr::ge_ptr(const ge_ptr &other)
-    :ge_ptr(other.host_ptr, other.host_delegate, other.target_delegate)
+generic_ptr::generic_ptr(const generic_ptr &other)
+    :generic_ptr(other.host_ptr, other.host_delegate, other.target_delegate)
 {
     this->operator=(other);
 }
 
-ge_ptr::ge_ptr(ge_ptr &&other)
-    :ge_ptr(other.host_ptr, other.host_delegate, other.target_delegate)
+generic_ptr::generic_ptr(generic_ptr &&other)
+    :generic_ptr(other.host_ptr, other.host_delegate, other.target_delegate)
 {
     this->operator=(other);
 }
 
-ge_ptr::~ge_ptr(){
+generic_ptr::~generic_ptr(){
     if(target_ptr){
         auto post = new PointerRef(PointerRef::CANCEL, host_ptr, this, target_ptr, target_delegate);
         queue->push(post);
@@ -51,19 +51,23 @@ ge_ptr::~ge_ptr(){
     queue->push(post);
 }
 
-ge_ptr &ge_ptr::operator=(const ge_ptr &other)
+GC_Delegate *generic_ptr::delegate_of_target() const{
+    return target_delegate;
+}
+
+generic_ptr &generic_ptr::operator=(const generic_ptr &other)
 {
     operator=(other.target_ptr);
 
     return *this;
 }
 
-void *ge_ptr::operator->() const
+void *generic_ptr::operator->() const
 {
     return target_ptr;
 }
 
-ge_ptr &ge_ptr::operator=(void *target)
+generic_ptr &generic_ptr::operator=(void *target)
 {
     if(target_ptr){
         auto post = new PointerRef(PointerRef::CANCEL, host_ptr, this, target_ptr, target_delegate);
@@ -117,7 +121,7 @@ bool GC_Worker::check_loop(std::list<void *> &achor, PeerSymbo *item)
 }
 
 
-PointerRef::PointerRef(PointerRef::Type type, void *host, ge_ptr *ptr, void *target, GC_Object *target_degelate)
+PointerRef::PointerRef(PointerRef::Type type, void *host, generic_ptr *ptr, void *target, GC_Delegate *target_degelate)
     :PointerOver (static_cast<PointerOver::Type>(type), host, target_degelate, ptr),target(target){}
 
 void *PointerRef::target_pointer()
@@ -223,18 +227,18 @@ void PointerRef::exec(std::map<void *, PeerSymbo *> &map)
 }
 
 
-PointerOver::PointerOver(PointerOver::Type type, void *host, GC_Object *host_delegate, ge_ptr *ptr)
+PointerOver::PointerOver(PointerOver::Type type, void *host, GC_Delegate *host_delegate, generic_ptr *ptr)
     :Command (static_cast<Command::Type>(type)), ptr_mark(ptr),host_ptr(host),  delegate_ins(host_delegate){}
 
 void *PointerOver::host_object(){
     return host_ptr;
 }
 
-GC_Object *PointerOver::delegate_object(){
+GC_Delegate *PointerOver::delegate_object(){
     return delegate_ins;
 }
 
-ge_ptr *PointerOver::smart_pointer(){
+generic_ptr *PointerOver::smart_pointer(){
     return ptr_mark;
 }
 
