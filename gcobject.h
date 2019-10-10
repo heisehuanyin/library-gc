@@ -140,7 +140,7 @@ namespace ws {
             virtual ~GC_Delegate(){}
 
             virtual void manual_clear(){
-                delete obj;
+                if(obj) delete obj;
             }
 
         private:
@@ -148,14 +148,17 @@ namespace ws {
         };
     }
 
+    extern __internal::GC_Delegate<int> global_object;
+
     template <typename T>
-    class smart_ptr : public __internal::ge_ptr
+    class smart_ptr : __internal::ge_ptr
     {
     public:
-        explicit smart_ptr(T* host)
-            :ge_ptr(host, new __internal::GC_Delegate<T>(host)) {}
+        template<typename HostType>
+        explicit smart_ptr(HostType* host)
+            :ge_ptr(host, new __internal::GC_Delegate<HostType>(host)) {}
         smart_ptr(const smart_ptr<T>& other)
-            :ge_ptr (other){}
+            :ge_ptr(other){}
         smart_ptr(smart_ptr<T>&& rv)
             :ge_ptr(rv){}
 
@@ -164,20 +167,28 @@ namespace ws {
 
         smart_ptr<T>& operator=(T* target)
         {
-            ge_ptr::operator=(target);
+            __internal::ge_ptr::operator=(target);
 
             return *this;
         }
         smart_ptr<T>& operator=(const smart_ptr<T>& other){
-            ge_ptr::operator=(other);
+            __internal::ge_ptr::operator=(other);
 
             return *this;
         }
 
         T* operator->(){
-            return static_cast<T*>(ge_ptr::operator->());
+            return static_cast<T*>(__internal::ge_ptr::operator->());
         }
     };
+
+
+    template <typename HostType, typename T>
+    smart_ptr<T> gc_wrap(HostType*host, T* target){
+        auto one = smart_ptr<T>(host);
+        one = target;
+        return one;
+    }
 }
 
 #endif // GCOBJECT_H

@@ -32,15 +32,18 @@ private:
 
 void test(){
     // 新建智能指针
-    ws::smart_ptr<GeObject> c(nullptr);
+    ws::smart_ptr<GeObject> c(&ws::global_object);
     // 托管实例指针
     c = new GeObject();
 
-    ws::smart_ptr<GeObject> f(nullptr);
+    ws::smart_ptr<GeObject> f(&ws::global_object);
     // 智能指针复制
     f = c;
     // 变更托管指针
     c = new GeObject();
+
+    auto nptr = ws::gc_wrap(&ws::global_object, new GeObject);
+    nptr->print("simple");
 
     // 循环引用
     f->reference(c);

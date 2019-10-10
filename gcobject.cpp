@@ -4,6 +4,7 @@ using namespace ws::__internal;
 
 static GC_Worker worker;
 static GC_Delegate<int> invilid_node(nullptr);
+GC_Delegate<int> ws::global_object(nullptr);
 
 
 Command::Command(Command::Type type)
