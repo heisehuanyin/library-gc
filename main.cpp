@@ -4,7 +4,7 @@ using namespace std;
 
 #include "gcobject.h"
 
-class GeObject : public ws::GC_Object
+class GeObject
 {
 public:
     GeObject()
@@ -32,11 +32,11 @@ private:
 
 void test(){
     // 新建智能指针
-    ws::smart_ptr<GeObject> c;
+    ws::smart_ptr<GeObject> c(nullptr);
     // 托管实例指针
     c = new GeObject();
 
-    ws::smart_ptr<GeObject> f;
+    ws::smart_ptr<GeObject> f(nullptr);
     // 智能指针复制
     f = c;
     // 变更托管指针
