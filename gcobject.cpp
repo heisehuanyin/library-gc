@@ -6,18 +6,14 @@ static GC_Worker worker;
 static GC_RawWrap<int> invilid_node(nullptr);
 GC_RawWrap<int> ws::global_object(nullptr);
 
-
-Command::Command(Command::Type type)
-    :type(type){}
-
-Command::Type Command::command_type(){ return type; }
-
-
-
 sync::BlockingQueue<Command*>&& GC_Worker::commands = sync::BlockingQueue<Command*>();
 std::map<void*, PeerSymbo*> GC_Worker::objs_map = std::map<void*, PeerSymbo*>();
-
 sync::BlockingQueue<Command*>* generic_ptr::queue = &GC_Worker::commands;
+
+
+Command::Command(Command::Type type):type(type){}
+
+Command::Type Command::command_type(){ return type; }
 
 generic_ptr::generic_ptr(void *host, GC_Delegate* delegate_host, GC_Delegate *delegate_target)
     :host_ptr(host),

@@ -205,8 +205,7 @@ namespace ws {
     template <typename HostType, typename T>
     smart_ptr<T> gc_wrap(HostType*host, T* target){
         auto one = smart_ptr<T>(host);
-        one = target;
-        return one;
+        return one = target;
     }
 }
 
