@@ -19,30 +19,31 @@ std::map<void*, PeerSymbo*> GC_Worker::objs_map = std::map<void*, PeerSymbo*>();
 
 sync::BlockingQueue<Command*>* ge_ptr::queue = &GC_Worker::commands;
 
-ge_ptr::ge_ptr(void *host, GC_Object* delegate)
+ge_ptr::ge_ptr(void *host, GC_Object* delegate, GC_Object *delegate2)
     :host_ptr(host),
       host_delegate(delegate),
-      target_ptr(nullptr)
+      target_ptr(nullptr),
+      target_delegate(delegate2)
 {
     auto post = new PointerOver(PointerOver::NEW, host, host_delegate, this);
     queue->push(post);
 }
 
 ge_ptr::ge_ptr(const ge_ptr &other)
-    :ge_ptr(other.host_ptr, other.host_delegate)
+    :ge_ptr(other.host_ptr, other.host_delegate, other.target_delegate)
 {
     this->operator=(other);
 }
 
 ge_ptr::ge_ptr(ge_ptr &&other)
-    :ge_ptr(other.host_ptr, other.host_delegate)
+    :ge_ptr(other.host_ptr, other.host_delegate, other.target_delegate)
 {
     this->operator=(other);
 }
 
 ge_ptr::~ge_ptr(){
     if(target_ptr){
-        auto post = new PointerRef(PointerRef::CANCEL, host_ptr, host_delegate, this, target_ptr);
+        auto post = new PointerRef(PointerRef::CANCEL, host_ptr, this, target_ptr, target_delegate);
         queue->push(post);
     }
 
@@ -57,7 +58,7 @@ ge_ptr &ge_ptr::operator=(const ge_ptr &other)
     return *this;
 }
 
-void *ge_ptr::operator->()
+void *ge_ptr::operator->() const
 {
     return target_ptr;
 }
@@ -65,12 +66,12 @@ void *ge_ptr::operator->()
 ge_ptr &ge_ptr::operator=(void *target)
 {
     if(target_ptr){
-        auto post = new PointerRef(PointerRef::CANCEL, host_ptr, host_delegate, this, target_ptr);
+        auto post = new PointerRef(PointerRef::CANCEL, host_ptr, this, target_ptr, target_delegate);
         queue->push(post);
     }
 
     this->target_ptr = target;
-    auto post = new PointerRef(PointerRef::BUILD, host_ptr, host_delegate, this, target_ptr);
+    auto post = new PointerRef(PointerRef::BUILD, host_ptr, this, target_ptr, target_delegate);
     queue->push(post);
 
     return *this;
@@ -100,8 +101,8 @@ void GC_Worker::run(){
                         host_it->second->members.push_back(std::make_pair(item->smart_pointer(), &invilid_node));
                     }
 
-                    // 注册实际内存管理委托对象
                     host_it = objs_map.find(item->host_object());
+                    // 注册实际内存管理委托对象
                     auto iii = std::find(host_it->second->delegates.cbegin(),
                                          host_it->second->delegates.cend(),
                                          item->delegate_object());
@@ -164,6 +165,15 @@ void GC_Worker::run(){
                         target_it = objs_map.find(caseitem->target_pointer());
                     }
 
+                    // 注册实际内存管理委托对象
+                    auto iii = std::find(target_it->second->delegates.cbegin(),
+                                         target_it->second->delegates.cend(),
+                                         item->delegate_object());
+
+                    if(iii == host_it->second->delegates.cend())
+                        target_it->second->delegates.push_back(item->delegate_object());
+
+                    // 引用计数
                     std::list<void*> temp = { host_it->first };
                     auto itt = std::find(target_it->second->ref_records.cbegin(),
                                          target_it->second->ref_records.cend(),
@@ -183,6 +193,18 @@ void GC_Worker::run(){
 
                     if(target_it == objs_map.cend()){
                         break;
+                    }
+
+                    // 删除指定指针对应的委托对象，留下一个用于实际管理指向对象
+                    if(target_it->second->delegates.size() > 1){
+                        auto itdel = std::find(target_it->second->delegates.cbegin(),
+                                               target_it->second->delegates.cend(),
+                                               item->delegate_object());
+
+                        if(itdel != target_it->second->delegates.cend()){
+                            delete *itdel;
+                            host_it->second->delegates.erase(itdel);
+                        }
                     }
 
                     auto ptr_it = std::find(target_it->second->ref_records.cbegin(),
@@ -237,8 +259,8 @@ bool GC_Worker::check_loop(std::list<void *> &achor, PeerSymbo *item)
 }
 
 
-PointerRef::PointerRef(PointerRef::Type type, void *host, GC_Object *mgro, ge_ptr *ptr, void *target)
-    :PointerOver (static_cast<PointerOver::Type>(type), host, mgro, ptr),target(target){}
+PointerRef::PointerRef(PointerRef::Type type, void *host, ge_ptr *ptr, void *target, GC_Object *target_degelate)
+    :PointerOver (static_cast<PointerOver::Type>(type), host, target_degelate, ptr),target(target){}
 
 void *PointerRef::target_pointer()
 {
@@ -246,15 +268,15 @@ void *PointerRef::target_pointer()
 }
 
 
-PointerOver::PointerOver(PointerOver::Type type, void *host, GC_Object *mgro, ge_ptr *ptr)
-    :Command (static_cast<Command::Type>(type)), ptr_mark(ptr),host_ptr(host),  mgro(mgro){}
+PointerOver::PointerOver(PointerOver::Type type, void *host, GC_Object *host_delegate, ge_ptr *ptr)
+    :Command (static_cast<Command::Type>(type)), ptr_mark(ptr),host_ptr(host),  delegate_ins(host_delegate){}
 
 void *PointerOver::host_object(){
     return host_ptr;
 }
 
 GC_Object *PointerOver::delegate_object(){
-    return mgro;
+    return delegate_ins;
 }
 
 ge_ptr *PointerOver::smart_pointer(){

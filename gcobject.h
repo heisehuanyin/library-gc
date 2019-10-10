@@ -48,6 +48,7 @@ namespace ws {
             Type type;
         };
 
+        // 指针的建立与删除
         class PointerOver: public Command
         {
         public:
@@ -57,7 +58,7 @@ namespace ws {
                 CONNEC = Command::POINTER_OBJECTREF,
                 CANCAL = Command::POINTER_CANCELREF
             };
-            PointerOver(Type type, void* host, GC_Object* mgro, ge_ptr* ptr);
+            PointerOver(Type type, void* host, GC_Object* host_delegate, ge_ptr* ptr);
             virtual ~PointerOver() = default;
 
             void* host_object();
@@ -67,9 +68,10 @@ namespace ws {
         private:
             ge_ptr*const ptr_mark;
             void*const host_ptr;
-            GC_Object*const mgro;
+            GC_Object*const delegate_ins;
         };
 
+        // 更改指针指向
         class PointerRef: public PointerOver
         {
         public:
@@ -77,7 +79,7 @@ namespace ws {
                 BUILD = Command::POINTER_OBJECTREF,
                 CANCEL = Command::POINTER_CANCELREF
             };
-            PointerRef(Type type, void* host, GC_Object* mgro, ge_ptr* ptr, void* target);
+            PointerRef(Type type, void* host, ge_ptr* ptr, void* target, GC_Object* target_degelate);
             virtual ~PointerRef() = default;
 
             void* target_pointer();
@@ -99,20 +101,25 @@ namespace ws {
 
         class ge_ptr{
         public:
-            explicit ge_ptr(void *host, GC_Object *delegate);
+            explicit ge_ptr(void *host, GC_Object *delegate, GC_Object* delegate2);
             ge_ptr(const ge_ptr& other);
             ge_ptr(ge_ptr&& other);
             virtual ~ge_ptr();
 
+            GC_Object* get_target_delegate(){
+                return target_delegate;
+            }
+
 
             ge_ptr &operator=(void* target);
             ge_ptr &operator=(const ge_ptr& other);
-            void *operator->();
+            void *operator->() const ;
 
         private:
             void *const host_ptr;
             GC_Object *const host_delegate;
             void * target_ptr;
+            GC_Object*const target_delegate;
             static sync::BlockingQueue<Command*>* queue;
         };
 
@@ -139,6 +146,10 @@ namespace ws {
             GC_Delegate(T* host):obj(host){}
             virtual ~GC_Delegate(){}
 
+            void reset_target(T* p){
+                obj = p;
+            }
+
             virtual void manual_clear(){
                 if(obj) delete obj;
             }
@@ -156,7 +167,9 @@ namespace ws {
     public:
         template<typename HostType>
         explicit smart_ptr(HostType* host)
-            :ge_ptr(host, new __internal::GC_Delegate<HostType>(host)) {}
+            :ge_ptr(host,
+                    new __internal::GC_Delegate<HostType>(host),
+                    new __internal::GC_Delegate<T>(nullptr)) {}
         smart_ptr(const smart_ptr<T>& other)
             :ge_ptr(other){}
         smart_ptr(smart_ptr<T>&& rv)
@@ -167,17 +180,23 @@ namespace ws {
 
         smart_ptr<T>& operator=(T* target)
         {
+            static_cast<__internal::GC_Delegate<T>*>
+                    (get_target_delegate())->reset_target(target);
+
             __internal::ge_ptr::operator=(target);
 
             return *this;
         }
         smart_ptr<T>& operator=(const smart_ptr<T>& other){
+            static_cast<__internal::GC_Delegate<T>*>
+                    (get_target_delegate())->reset_target(other.operator->());
+
             __internal::ge_ptr::operator=(other);
 
             return *this;
         }
 
-        T* operator->(){
+        T* operator->() const {
             return static_cast<T*>(__internal::ge_ptr::operator->());
         }
     };
