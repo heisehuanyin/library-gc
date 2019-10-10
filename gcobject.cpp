@@ -86,7 +86,7 @@ void GC_Worker::run(){
     while (true) {
         auto item = commands.take();
 
-        item->exec(item, objs_map);
+        item->exec(objs_map);
         delete item;
     }
 }
@@ -125,23 +125,22 @@ void *PointerRef::target_pointer()
     return target;
 }
 
-void PointerRef::exec(Command *item, std::map<void *, PeerSymbo *> &map)
+void PointerRef::exec(std::map<void *, PeerSymbo *> &map)
 {
-    auto caseitem = static_cast<PointerRef*>(item);
-    auto host_it = map.find(caseitem->host_object());
-    auto target_it = map.find(caseitem->target_pointer());
+    auto host_it = map.find(this->host_object());
+    auto target_it = map.find(this->target_pointer());
 
-    switch (caseitem->command_type()) {
+    switch (this->command_type()) {
         case POINTER_OBJECTREF:
             {
                 for (auto ref_assciate_it=host_it->second->members.cbegin();
                      ref_assciate_it != host_it->second->members.cend();
                      ++ref_assciate_it){
                     // 修改指针指向
-                    if(ref_assciate_it->first == caseitem->smart_pointer()){
+                    if(ref_assciate_it->first == this->smart_pointer()){
                         host_it->second->members.insert(ref_assciate_it,
-                                                        std::make_pair(caseitem->smart_pointer(),
-                                                                       caseitem->target_pointer()));
+                                                        std::make_pair(this->smart_pointer(),
+                                                                       this->target_pointer()));
 
                         host_it->second->members.erase(ref_assciate_it);
                         break;
@@ -151,30 +150,30 @@ void PointerRef::exec(Command *item, std::map<void *, PeerSymbo *> &map)
 
                 if(target_it == map.cend()){
                     auto ato = new PeerSymbo;
-                    map[caseitem->target_pointer()] = ato;
-                    ato->delegates.push_back(caseitem->delegate_object());
+                    map[this->target_pointer()] = ato;
+                    ato->delegates.push_back(this->delegate_object());
 
-                    target_it = map.find(caseitem->target_pointer());
+                    target_it = map.find(this->target_pointer());
                 }
 
                 // 注册实际内存管理委托对象
                 auto iii = std::find(target_it->second->delegates.cbegin(),
                                      target_it->second->delegates.cend(),
-                                     caseitem->delegate_object());
+                                     this->delegate_object());
 
                 if(iii == host_it->second->delegates.cend())
-                    target_it->second->delegates.push_back(caseitem->delegate_object());
+                    target_it->second->delegates.push_back(this->delegate_object());
 
                 // 引用计数
                 std::list<void*> temp = { host_it->first };
                 auto itt = std::find(target_it->second->ref_records.cbegin(),
                                      target_it->second->ref_records.cend(),
-                                     caseitem->smart_pointer());
+                                     this->smart_pointer());
 
                 if(itt == target_it->second->ref_records.cend()){
                     if(GC_Worker::check_loop(temp, host_it->second))
                         break;
-                    target_it->second->ref_records.push_back(caseitem->smart_pointer());
+                    target_it->second->ref_records.push_back(this->smart_pointer());
                 }
             }
             break;
@@ -188,7 +187,7 @@ void PointerRef::exec(Command *item, std::map<void *, PeerSymbo *> &map)
                 if(target_it->second->delegates.size() > 1){
                     auto itdel = std::find(target_it->second->delegates.cbegin(),
                                            target_it->second->delegates.cend(),
-                                           caseitem->delegate_object());
+                                           this->delegate_object());
 
                     if(itdel != target_it->second->delegates.cend()){
                         delete *itdel;
@@ -198,7 +197,7 @@ void PointerRef::exec(Command *item, std::map<void *, PeerSymbo *> &map)
 
                 auto ptr_it = std::find(target_it->second->ref_records.cbegin(),
                                         target_it->second->ref_records.cend(),
-                                        caseitem->smart_pointer());
+                                        this->smart_pointer());
 
                 if(ptr_it != target_it->second->ref_records.cend()){
                     target_it->second->ref_records.erase(ptr_it);
@@ -239,33 +238,32 @@ ge_ptr *PointerOver::smart_pointer(){
     return ptr_mark;
 }
 
-void PointerOver::exec(Command *item, std::map<void *, PeerSymbo *> &map)
+void PointerOver::exec(std::map<void *, PeerSymbo *> &map)
 {
-    auto caseitem = static_cast<PointerOver*>(item);
-    auto host_it = map.find(caseitem->host_object());
+    auto host_it = map.find(this->host_object());
 
     switch (this->command_type()) {
         case POINTER_NEW:
             {
                 if(host_it == map.cend()){
                     auto peersym = new PeerSymbo;
-                    peersym->members.push_back(std::make_pair(caseitem->smart_pointer(), &invilid_node));
+                    peersym->members.push_back(std::make_pair(this->smart_pointer(), &invilid_node));
 
                     // 注册对等对象
-                    map[caseitem->host_object()] = peersym;
+                    map[this->host_object()] = peersym;
                 }
                 else {
-                    host_it->second->members.push_back(std::make_pair(caseitem->smart_pointer(), &invilid_node));
+                    host_it->second->members.push_back(std::make_pair(this->smart_pointer(), &invilid_node));
                 }
 
-                host_it = map.find(caseitem->host_object());
+                host_it = map.find(this->host_object());
                 // 注册实际内存管理委托对象
                 auto iii = std::find(host_it->second->delegates.cbegin(),
                                      host_it->second->delegates.cend(),
-                                     caseitem->delegate_object());
+                                     this->delegate_object());
 
                 if(iii == host_it->second->delegates.cend())
-                    host_it->second->delegates.push_back(caseitem->delegate_object());
+                    host_it->second->delegates.push_back(this->delegate_object());
             }
             break;
         case POINTER_DEL:
@@ -275,7 +273,7 @@ void PointerOver::exec(Command *item, std::map<void *, PeerSymbo *> &map)
                          pointer_it != host_it->second->members.cend();
                          ++pointer_it) {
 
-                        if(pointer_it->first == caseitem->smart_pointer())
+                        if(pointer_it->first == this->smart_pointer())
                             host_it->second->members.erase(pointer_it);
                     }
 
@@ -283,7 +281,7 @@ void PointerOver::exec(Command *item, std::map<void *, PeerSymbo *> &map)
                     if(host_it->second->delegates.size() > 1){
                         auto itdel = std::find(host_it->second->delegates.cbegin(),
                                                host_it->second->delegates.cend(),
-                                               caseitem->delegate_object());
+                                               this->delegate_object());
 
                         if(itdel != host_it->second->delegates.cend()){
                             delete *itdel;

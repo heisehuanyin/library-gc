@@ -13,11 +13,6 @@
 namespace ws {
     // Pre-DECL
     namespace __internal {
-        class Command;
-        class PointerNew;
-        class PointerDel;
-        class PointerObjectRef;
-        class PointerCancelRef;
         class ge_ptr;
         class PeerSymbo;
     }
@@ -49,7 +44,7 @@ namespace ws {
              * @param item 抽象命令
              * @param map 对象引用图
              */
-            virtual void exec(Command* item, std::map<void*, PeerSymbo*>& map) = 0;
+            virtual void exec(std::map<void*, PeerSymbo*>& map) = 0;
 
         private:
             Type type;
@@ -66,13 +61,13 @@ namespace ws {
                 CANCAL = Command::POINTER_CANCELREF
             };
             PointerOver(Type type, void* host, GC_Object* host_delegate, ge_ptr* ptr);
-            virtual ~PointerOver() = default;
+            virtual ~PointerOver() override = default;
 
             void* host_object();
             GC_Object* delegate_object();
             ge_ptr *smart_pointer();
 
-            void exec(Command* item, std::map<void*, PeerSymbo*>& map);
+            void exec(std::map<void*, PeerSymbo*>& map) override;
 
         private:
             ge_ptr*const ptr_mark;
@@ -89,11 +84,11 @@ namespace ws {
                 CANCEL = Command::POINTER_CANCELREF
             };
             PointerRef(Type type, void* host, ge_ptr* ptr, void* target, GC_Object* target_degelate);
-            virtual ~PointerRef() = default;
+            virtual ~PointerRef() override = default;
 
             void* target_pointer();
 
-            void exec(Command* item, std::map<void*, PeerSymbo*>& map);
+            void exec(std::map<void*, PeerSymbo*>& map) override;
 
         private:
             void*const target;
