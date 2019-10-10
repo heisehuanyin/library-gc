@@ -27,7 +27,7 @@ class SomeType
 public:
     // smart_ptr init
     SomeType()
-        :pointer(new ws::smart_ptr<SomeType>(this)){}
+        :pointer(ws::smart_ptr<SomeType>(this)){}
     virtual ~SomeType() = default;
 
     // else method
