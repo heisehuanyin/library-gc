@@ -3,6 +3,7 @@
 
 #include <list>
 #include <map>
+#include <iostream>
 
 #include "../ecosystem/sync.h"
 #include "../ecosystem/excstream.h"
@@ -21,6 +22,7 @@ namespace ws {
             virtual ~GC_Delegate() = default;
 
             virtual void manual_clear() = 0;
+            virtual GC_Delegate* clone() = 0;
         };
 
         // 可执行命令超类
@@ -30,7 +32,8 @@ namespace ws {
                 POINTER_NEW,
                 POINTER_DEL,
                 POINTER_OBJECTREF,
-                POINTER_CANCELREF
+                POINTER_CANCELREF,
+                PRINT_STACK
             };
             explicit Command(Type type);
             virtual ~Command() = default;
@@ -47,6 +50,21 @@ namespace ws {
         private:
             Type type;
         };
+        class PrintStack : public Command{
+        public:
+            enum Type{
+                CODE_MDDOC,
+                CODE_GRAPHVIZ
+            };
+            explicit PrintStack(Type type);
+            virtual ~PrintStack() = default;
+
+            void exec(std::map<void*, PeerSymbo*> &map);
+
+        private:
+            Type type;
+        };
+
         // 智能指针的建立与删除
         class PointerOver: public Command
         {
@@ -57,12 +75,12 @@ namespace ws {
                 CONNEC = Command::POINTER_OBJECTREF,
                 CANCAL = Command::POINTER_CANCELREF
             };
-            PointerOver(Type type, void* host, GC_Delegate* host_delegate, generic_ptr* ptr);
+            PointerOver(Type type, void* host, generic_ptr* ptr, GC_Delegate* delfree);
             virtual ~PointerOver() override = default;
 
             void* host_object();
-            GC_Delegate* delegate_object();
             generic_ptr *smart_pointer();
+            GC_Delegate* delegate_object();
 
             void exec(std::map<void*, PeerSymbo*>& map) override;
 
@@ -82,7 +100,7 @@ namespace ws {
             PointerRef(Type type, void* host, generic_ptr* ptr, void* target, GC_Delegate* target_degelate);
             virtual ~PointerRef() override = default;
 
-            void* target_pointer();
+            void* target_object();
 
             void exec(std::map<void*, PeerSymbo*>& map) override;
 
@@ -93,17 +111,17 @@ namespace ws {
 
         class PeerSymbo{
         public:
-            explicit PeerSymbo()
-                :delegates({}){}
+            explicit PeerSymbo(){}
 
-            std::list<GC_Delegate*> delegates;
-            std::list<std::pair<generic_ptr*, void*>> members;
-            std::list<generic_ptr*> ref_records;
+            //  smart_ptr_ref      target_object:pointto
+            std::map<generic_ptr*, void*> members;
+            //  samrt_ptr_ref      host_object:pointfrom
+            std::map<generic_ptr*, void*> ref_records;
         };
 
         class generic_ptr{
         public:
-            explicit generic_ptr(void *host, GC_Delegate *delegate_host, GC_Delegate* delegate_target);
+            explicit generic_ptr(void *host, GC_Delegate* delegate_target);
             generic_ptr(const generic_ptr& other);
             generic_ptr(generic_ptr&& other);
             virtual ~generic_ptr();
@@ -114,9 +132,10 @@ namespace ws {
             generic_ptr &operator=(const generic_ptr& other);
             void *operator->() const ;
 
+            static void print_stack(PrintStack::Type type);
+
         private:
             void *const host_ptr;
-            GC_Delegate *const host_delegate;
             void * target_ptr;
             GC_Delegate *const target_delegate;
             static sync::BlockingQueue<Command*>* queue;
@@ -132,7 +151,8 @@ namespace ws {
 
             void run();
 
-            static bool check_loop(std::list<void *> &achor, PeerSymbo* item);
+            static bool check_root(std::list<void *> &records_node,
+                                   std::list<void *> &remain_forks);
 
         private:
             //       original-ptr  all-managed
@@ -154,6 +174,10 @@ namespace ws {
                 if(obj) delete obj;
             }
 
+            virtual GC_Delegate* clone(){
+                return new GC_RawWrap(obj);
+            }
+
         private:
             T* obj;
         };
@@ -165,11 +189,8 @@ namespace ws {
     class smart_ptr : __internal__implement::generic_ptr
     {
     public:
-        template<typename HostType>
-        explicit smart_ptr(HostType* host)
-            :generic_ptr(host,
-                    new __internal__implement::GC_RawWrap<HostType>(host),
-                    new __internal__implement::GC_RawWrap<T>(nullptr)) {}
+        explicit smart_ptr(void* host)
+            :generic_ptr(host, new __internal__implement::GC_RawWrap<T>(nullptr)) {}
         smart_ptr(const smart_ptr<T>& other)
             :generic_ptr(other){}
         smart_ptr(smart_ptr<T>&& rv)
@@ -180,20 +201,24 @@ namespace ws {
 
         smart_ptr<T>& operator=(T* target)
         {
+            __internal__implement::generic_ptr::operator=(target);
+
             static_cast<__internal__implement::GC_RawWrap<T>*>
                     (delegate_of_target())->reset_target(target);
-
-            __internal__implement::generic_ptr::operator=(target);
 
             return *this;
         }
         smart_ptr<T>& operator=(const smart_ptr<T>& other){
+            __internal__implement::generic_ptr::operator=(other);
+
             static_cast<__internal__implement::GC_RawWrap<T>*>
                     (delegate_of_target())->reset_target(other.operator->());
 
-            __internal__implement::generic_ptr::operator=(other);
-
             return *this;
+        }
+
+        T& operator*() const {
+            return *this->operator->();
         }
 
         T* operator->() const {
@@ -201,12 +226,76 @@ namespace ws {
         }
     };
 
+    enum StackPrintStyle{
+        MD_SNIPPETS = __internal__implement::PrintStack::CODE_MDDOC,
+        GRAPHVIZ = __internal__implement::PrintStack::CODE_GRAPHVIZ
+    };
 
     template <typename HostType, typename T>
     smart_ptr<T> gc_wrap(HostType*host, T* target){
         auto one = smart_ptr<T>(host);
         return one = target;
     }
+
+    class PrintStudio
+    {
+    public:
+        PrintStudio() = default;
+        ~PrintStudio() = default;
+
+        template <typename... Args>
+        void appendLineToStack(Args... args){
+            std::lock_guard<std::mutex> locker(ins_lock);
+            lines.push_back("");
+
+            element_append(args...);
+        }
+        void clear(){
+            lines.clear();
+        }
+
+        template <typename... Args>
+        static void printLine(Args... args){
+            std::lock_guard<std::mutex> locker(global_lock);
+
+            element_print(args...);
+            std::cout << std::endl;
+        }
+
+        static void print(PrintStudio& ins){
+            std::lock_guard<std::mutex> locker(global_lock);
+
+            for (auto line : ins.lines) {
+                std::cout << line << std::endl;
+            }
+        }
+
+    private:
+        static std::mutex global_lock;
+        static void element_print();
+        template<typename T, typename... Args>
+        static void element_print(T first, Args... args){
+            std::cout << first;
+            element_print(args...);
+        }
+
+        std::list<std::string> lines;
+        std::mutex ins_lock;
+        void element_append();
+        template<typename T, typename... Args>
+        void element_append(T first, Args... args){
+            auto item_it = --lines.end();
+            auto item = *item_it;
+            item += std::to_string(first);
+            lines.insert(item_it, item);
+            lines.erase(++item_it);
+
+            element_append(args...);
+        }
+    };
+
+
+    void print_gc_stack(StackPrintStyle style);
 }
 
 #endif // GCOBJECT_H

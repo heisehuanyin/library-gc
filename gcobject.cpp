@@ -1,4 +1,5 @@
 #include "gcobject.h"
+#include <iostream>
 
 using namespace ws::__internal__implement;
 
@@ -15,24 +16,23 @@ Command::Command(Command::Type type):type(type){}
 
 Command::Type Command::command_type(){ return type; }
 
-generic_ptr::generic_ptr(void *host, GC_Delegate* delegate_host, GC_Delegate *delegate_target)
+generic_ptr::generic_ptr(void *host, GC_Delegate *delegate_target)
     :host_ptr(host),
-      host_delegate(delegate_host),
       target_ptr(nullptr),
-      target_delegate(delegate_target)
+      target_delegate(delegate_target->clone())
 {
-    auto post = new PointerOver(PointerOver::NEW, host, host_delegate, this);
+    auto post = new PointerOver(PointerOver::NEW, host, this, target_delegate);
     queue->push(post);
 }
 
 generic_ptr::generic_ptr(const generic_ptr &other)
-    :generic_ptr(other.host_ptr, other.host_delegate, other.target_delegate)
+    :generic_ptr(other.host_ptr, other.target_delegate)
 {
     this->operator=(other);
 }
 
 generic_ptr::generic_ptr(generic_ptr &&other)
-    :generic_ptr(other.host_ptr, other.host_delegate, other.target_delegate)
+    :generic_ptr(other.host_ptr, other.target_delegate)
 {
     this->operator=(other);
 }
@@ -43,7 +43,7 @@ generic_ptr::~generic_ptr(){
         queue->push(post);
     }
 
-    auto post = new PointerOver(PointerOver::DEL, host_ptr, host_delegate, this);
+    auto post = new PointerOver(PointerOver::DEL, host_ptr, this, target_delegate);
     queue->push(post);
 }
 
@@ -61,6 +61,12 @@ generic_ptr &generic_ptr::operator=(const generic_ptr &other)
 void *generic_ptr::operator->() const
 {
     return target_ptr;
+}
+
+void generic_ptr::print_stack(PrintStack::Type type)
+{
+    auto post = new PrintStack(type);
+    queue->push(post);
 }
 
 generic_ptr &generic_ptr::operator=(void *target)
@@ -91,36 +97,49 @@ void GC_Worker::run(){
     }
 }
 
-bool GC_Worker::check_loop(std::list<void *> &achor, PeerSymbo *item)
+bool GC_Worker::check_root(std::list<void *> &records_node, std::list<void*> &remain_forks)
 {
-    for (auto it=item->members.cbegin(); it!=item->members.cend();++it) {
-        auto object = it->second;
+    auto _it_ = --remain_forks.cend();
+    auto this_node = *_it_;
+    remain_forks.erase(_it_);
 
-        auto itorrrr = std::find(achor.cbegin(), achor.cend(), object);
-        if(itorrrr != achor.cend()){
-            return true;
+    auto _peer_ = objs_map.find(this_node);
+    if(_peer_ == objs_map.cend()){
+        if(this_node != &invilid_node && this_node != &global_object){
+            PrintStudio::printLine("ERROR:Out of registed except objects<",this_node,">.");
         }
-        else {
-            achor.push_back(object);
 
-            auto it2 = objs_map.find(object);
-            if(it2 != objs_map.cend()){
-                if(check_loop(achor, it2->second)){
-                    return true;
-                }
-            }
+        return true;
+    }
+    auto this_peer = _peer_->second;
 
-            achor.remove(object);
+    auto find_result = std::find(records_node.cbegin(), records_node.cend(), this_node);
+    if(!this_peer->ref_records.size() && find_result == records_node.cend())
+        return true;
+    records_node.push_back(this_node);
+
+    // ================next check====================
+    for (auto it=this_peer->ref_records.cbegin(); it != this_peer->ref_records.cend(); ++it) {
+        auto find_result = std::find(records_node.cbegin(), records_node.cend(), it->second);
+        auto find_r2 = std::find(remain_forks.cbegin(), remain_forks.cend(), it->second);
+
+        if(find_result == records_node.cend() && find_r2 == remain_forks.cend()){
+            remain_forks.push_back(it->second);
         }
     }
+
+    while (remain_forks.size()) {
+        if(check_root(records_node, remain_forks))
+            return true;
+    }
+
     return false;
 }
 
-
 PointerRef::PointerRef(PointerRef::Type type, void *host, generic_ptr *ptr, void *target, GC_Delegate *target_degelate)
-    :PointerOver (static_cast<PointerOver::Type>(type), host, target_degelate, ptr),target(target){}
+    :PointerOver (static_cast<PointerOver::Type>(type),host, ptr, target_degelate),target(target){}
 
-void *PointerRef::target_pointer()
+void *PointerRef::target_object()
 {
     return target;
 }
@@ -128,91 +147,61 @@ void *PointerRef::target_pointer()
 void PointerRef::exec(std::map<void *, PeerSymbo *> &map)
 {
     auto host_it = map.find(this->host_object());
-    auto target_it = map.find(this->target_pointer());
+    auto target_it = map.find(this->target_object());
+
 
     switch (this->command_type()) {
-        case POINTER_OBJECTREF:
-            {
-                for (auto ref_assciate_it=host_it->second->members.cbegin();
-                     ref_assciate_it != host_it->second->members.cend();
-                     ++ref_assciate_it){
-                    // 修改指针指向
-                    if(ref_assciate_it->first == this->smart_pointer()){
-                        host_it->second->members.insert(ref_assciate_it,
-                                                        std::make_pair(this->smart_pointer(),
-                                                                       this->target_pointer()));
-
-                        host_it->second->members.erase(ref_assciate_it);
-                        break;
-                    }
+        case POINTER_OBJECTREF: {
+                if(host_it == map.cend()){
+                    return;
                 }
 
+                auto ref_assciate_it = host_it->second->members.find(this->smart_pointer());
+                if(ref_assciate_it != host_it->second->members.cend())
+                    host_it->second->members[this->smart_pointer()] = this->target_object();
 
                 if(target_it == map.cend()){
                     auto ato = new PeerSymbo;
-                    map[this->target_pointer()] = ato;
-                    ato->delegates.push_back(this->delegate_object());
+                    map[this->target_object()] = ato;
 
-                    target_it = map.find(this->target_pointer());
+                    target_it = map.find(this->target_object());
                 }
-
-                // 注册实际内存管理委托对象
-                auto iii = std::find(target_it->second->delegates.cbegin(),
-                                     target_it->second->delegates.cend(),
-                                     this->delegate_object());
-
-                if(iii == host_it->second->delegates.cend())
-                    target_it->second->delegates.push_back(this->delegate_object());
 
                 // 引用计数
-                std::list<void*> temp = { host_it->first };
-                auto itt = std::find(target_it->second->ref_records.cbegin(),
-                                     target_it->second->ref_records.cend(),
-                                     this->smart_pointer());
-
-                if(itt == target_it->second->ref_records.cend()){
-                    if(GC_Worker::check_loop(temp, host_it->second))
-                        break;
-                    target_it->second->ref_records.push_back(this->smart_pointer());
-                }
+                auto itt = target_it->second->ref_records.find(this->smart_pointer());
+                if(itt == target_it->second->ref_records.cend())
+                    target_it->second->ref_records[this->smart_pointer()] = this->host_object();
             }
             break;
-        case POINTER_CANCELREF:
-            {
-                if(target_it == map.cend()){
+        case POINTER_CANCELREF: {
+                if(target_it == map.cend())
                     break;
-                }
 
-                // 删除指定指针对应的委托对象，留下一个用于实际管理指向对象
-                if(target_it->second->delegates.size() > 1){
-                    auto itdel = std::find(target_it->second->delegates.cbegin(),
-                                           target_it->second->delegates.cend(),
-                                           this->delegate_object());
-
-                    if(itdel != target_it->second->delegates.cend()){
-                        delete *itdel;
-                        host_it->second->delegates.erase(itdel);
-                    }
-                }
-
-                auto ptr_it = std::find(target_it->second->ref_records.cbegin(),
-                                        target_it->second->ref_records.cend(),
-                                        this->smart_pointer());
-
+                auto ptr_it = target_it->second->ref_records.find(this->smart_pointer());
                 if(ptr_it != target_it->second->ref_records.cend()){
                     target_it->second->ref_records.erase(ptr_it);
 
-                    // 如果引用记录为0，通过委托对象删除指向内存对象
-                    if(!target_it->second->ref_records.size()){
-                        // 删除实际内存对象
-                        (*target_it->second->delegates.cbegin())->manual_clear();
-                        // 删除委托对象
-                        delete *target_it->second->delegates.cbegin();
-                        // 删除对等对象
-                        delete target_it->second;
-                        // 解除占位
-                        map.erase(target_it);
+                    std::list<void*> records = {this->host_object()};
+                    std::list<void*> remains = {this->target_object()};
+
+                    if(target_it->second->ref_records.size()){
+                        if(GC_Worker::check_root(records, remains)){
+                            PrintStudio::printLine("gc-cancel<<<<<<<<<<<<");
+                            auto xx = new PrintStack(PrintStack::CODE_MDDOC);
+                            xx->exec(map);
+                            delete xx;
+                            PrintStudio::printLine("---------------------");
+                            break;
+                        }
                     }
+                    // 删除实际内存对象
+                    PrintStudio::printLine("delete-object::", this->target_object());
+                    this->delegate_object()->manual_clear();
+                    // 删除对等对象
+                    PrintStudio::printLine("delete-peer");
+                    delete target_it->second;
+                    // 解除占位
+                    map.erase(target_it);
                 }
             }
             break;
@@ -223,8 +212,8 @@ void PointerRef::exec(std::map<void *, PeerSymbo *> &map)
 }
 
 
-PointerOver::PointerOver(PointerOver::Type type, void *host, GC_Delegate *host_delegate, generic_ptr *ptr)
-    :Command (static_cast<Command::Type>(type)), ptr_mark(ptr),host_ptr(host),  delegate_ins(host_delegate){}
+PointerOver::PointerOver(PointerOver::Type type, void *host, generic_ptr *ptr, GC_Delegate *delfree)
+    :Command (static_cast<Command::Type>(type)), ptr_mark(ptr),host_ptr(host),delegate_ins(delfree){}
 
 void *PointerOver::host_object(){
     return host_ptr;
@@ -247,47 +236,25 @@ void PointerOver::exec(std::map<void *, PeerSymbo *> &map)
             {
                 if(host_it == map.cend()){
                     auto peersym = new PeerSymbo;
-                    peersym->members.push_back(std::make_pair(this->smart_pointer(), &invilid_node));
+                    peersym->members[this->smart_pointer()] = &invilid_node;
 
                     // 注册对等对象
                     map[this->host_object()] = peersym;
                 }
                 else {
-                    host_it->second->members.push_back(std::make_pair(this->smart_pointer(), &invilid_node));
+                    host_it->second->members[this->smart_pointer()] = &invilid_node;
                 }
-
-                host_it = map.find(this->host_object());
-                // 注册实际内存管理委托对象
-                auto iii = std::find(host_it->second->delegates.cbegin(),
-                                     host_it->second->delegates.cend(),
-                                     this->delegate_object());
-
-                if(iii == host_it->second->delegates.cend())
-                    host_it->second->delegates.push_back(this->delegate_object());
             }
             break;
         case POINTER_DEL:
             {
                 if(host_it != map.cend()){
-                    for (auto pointer_it = host_it->second->members.cbegin();
-                         pointer_it != host_it->second->members.cend();
-                         ++pointer_it) {
+                    auto result_it = host_it->second->members.find(this->smart_pointer());
+                    if(result_it != host_it->second->members.cend())
+                        host_it->second->members.erase(result_it);
 
-                        if(pointer_it->first == this->smart_pointer())
-                            host_it->second->members.erase(pointer_it);
-                    }
-
-                    // 删除指定指针对应的委托对象，留下一个用于实际管理指向对象
-                    if(host_it->second->delegates.size() > 1){
-                        auto itdel = std::find(host_it->second->delegates.cbegin(),
-                                               host_it->second->delegates.cend(),
-                                               this->delegate_object());
-
-                        if(itdel != host_it->second->delegates.cend()){
-                            delete *itdel;
-                            host_it->second->delegates.erase(itdel);
-                        }
-                    }
+                    PrintStudio::printLine("delete-delegate");
+                    delete this->delegate_object();
                 }
             }
             break;
@@ -295,3 +262,48 @@ void PointerOver::exec(std::map<void *, PeerSymbo *> &map)
             break;
     }
 }
+
+PrintStack::PrintStack(PrintStack::Type type):Command(Command::Type::PRINT_STACK),type(type){}
+
+void PrintStack::exec(std::map<void *, PeerSymbo *> &map){
+    std::map<void*, std::string> node_translate;
+    std::map<std::string, void*> arrow_records;
+    for (auto node : map) {
+        if(node_translate.find(node.first) == node_translate.cend())
+            node_translate[node.first] = "node_"+ std::to_string(node_translate.size());
+
+        for (auto arrows : node.second->members) {
+            if(node_translate.find(arrows.second) == node_translate.cend())
+                node_translate[arrows.second] = "node_"+std::to_string(node_translate.size());
+
+            auto item = node_translate[node.first] + " -> " + node_translate[arrows.second]
+                    +"[label=\"ptr=";
+            arrow_records[item] = arrows.first;
+        }
+    }
+
+    if(type == Type::CODE_MDDOC)
+        PrintStudio::printLine("```graphviz");
+    PrintStudio::printLine("digraph stack_tracker{ ");
+    for (auto node : node_translate) {
+        PrintStudio::printLine(node.second, "[label=\"obj=", node.first, "\"]");
+    }
+    for (auto item : arrow_records) {
+        PrintStudio::printLine(item.first, item.second, "\"];");
+    }
+    PrintStudio::printLine("}");
+
+    if(type == Type::CODE_MDDOC)
+        PrintStudio::printLine("```");
+}
+
+std::mutex ws::PrintStudio::global_lock;
+
+void ws::print_gc_stack(StackPrintStyle style){
+    __internal__implement::generic_ptr::print_stack(
+                static_cast<__internal__implement::PrintStack::Type>(style));
+}
+
+void ws::PrintStudio::element_print(){}
+
+void ws::PrintStudio::element_append(){}

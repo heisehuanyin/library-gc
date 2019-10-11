@@ -10,18 +10,14 @@ public:
     GeObject()
         :hold(ws::smart_ptr<GeObject>(this))
     {
-        cout << "GeObjectNew" << endl;
+        //cout << "<<GeObjectNew:>>"<< this << endl;
     }
     ~GeObject(){
-        cout << "GeObjectDel" << endl;
+        //cout << "<<GeObjectDel:"<< this << endl;
     }
 
     void reference(ws::smart_ptr<GeObject> one){
         this->hold = one;
-    }
-
-    void print(const string &msg){
-        cout << msg << endl;
     }
 
 private:
@@ -30,7 +26,7 @@ private:
 
 
 
-void test(){
+void test(/*ws::smart_ptr<GeObject> external*/){
     // 新建智能指针
     ws::smart_ptr<GeObject> c(&ws::global_object);
     // 托管实例指针
@@ -43,20 +39,34 @@ void test(){
     c = new GeObject();
 
     auto nptr = ws::gc_wrap(&ws::global_object, new GeObject);
-    nptr->print("simple");
+
+    auto& c3 = *nptr;
+    c3.reference(f);
 
     // 循环引用
     f->reference(c);
     c->reference(f);
 
-    f->print("f-msg");
-    c->print("c-msg");
+
+
+    // 环形悬空
+    auto p1 = ws::gc_wrap(&ws::global_object, new GeObject);
+    auto p2 = ws::gc_wrap(&ws::global_object, new GeObject);
+    auto p3 = ws::gc_wrap(&ws::global_object, new GeObject);
+    auto p4 = ws::gc_wrap(&ws::global_object, new GeObject);
+
+    p4->reference(p1);
+    p1->reference(p2);
+    p2->reference(p3);
+    p3->reference(p1);
+
 }
 
 int main()
 {
     test();
-    cout << "test-done" << endl;
+    ws::PrintStudio::printLine("TestDone.=====================");
+    ws::print_gc_stack(ws::StackPrintStyle::MD_SNIPPETS);
     std::cin.get();
     return 0;
 }
