@@ -10,7 +10,7 @@
 
 #ifndef WS_DEBUG_MACRO_TOOLS
 #define WS_DEBUG_MACRO_TOOLS
-#define WS_TURNON_STACK_MESSAGE \
+#define WS_TURNON_STACK_MESSAGE() \
     ws::__wether_print_debug_state = true;
 #endif
 

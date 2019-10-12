@@ -30,7 +30,7 @@ private:
     ws::smart_ptr<GeObject> hold;
 };
 
-void test(/*ws::smart_ptr<GeObject> external*/){
+void test(){
     // 新建智能指针
     ws::smart_ptr<GeObject> c(&ws::global_object, nullptr);
     // 托管实例指针
@@ -69,7 +69,8 @@ void test(/*ws::smart_ptr<GeObject> external*/){
 
 int main()
 {
-    WS_TURNON_STACK_MESSAGE
+    WS_TURNON_STACK_MESSAGE();
+
     test();
     ws::IOStudio::printLine("TestDone.=====================");
     std::cin.get();
