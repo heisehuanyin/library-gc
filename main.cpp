@@ -4,6 +4,8 @@ using namespace std;
 
 #include "gcobject.h"
 
+#define WS_DEBUG_MACRO_TOOLS
+
 class GeObject
 {
 public:
@@ -20,11 +22,13 @@ public:
         this->hold = one;
     }
 
+    void print(std::string v){
+        ws::IOStudio::printLine(v);
+    }
+
 private:
     ws::smart_ptr<GeObject> hold;
 };
-
-
 
 void test(/*ws::smart_ptr<GeObject> external*/){
     // 新建智能指针
@@ -42,6 +46,7 @@ void test(/*ws::smart_ptr<GeObject> external*/){
 
     auto& c3 = *nptr;
     c3.reference(f);
+    //c3.print("hello-nptr");
 
     // 循环引用
     f->reference(c);
@@ -64,6 +69,7 @@ void test(/*ws::smart_ptr<GeObject> external*/){
 
 int main()
 {
+    WS_TURNON_STACK_MESSAGE
     test();
     ws::IOStudio::printLine("TestDone.=====================");
     std::cin.get();

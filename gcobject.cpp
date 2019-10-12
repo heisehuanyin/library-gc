@@ -6,6 +6,7 @@ using namespace ws::__internal__implement;
 static GC_Worker worker;
 static GC_RawWrap<int> invilid_node(nullptr);
 GC_RawWrap<int> ws::global_object(nullptr);
+bool ws::__wether_print_debug_state = false;
 
 sync::BlockingQueue<Command*>&& GC_Worker::commands = sync::BlockingQueue<Command*>();
 std::map<void*, PeerSymbo*> GC_Worker::objs_map = std::map<void*, PeerSymbo*>();
@@ -18,33 +19,29 @@ Command::Type Command::command_type(){ return type; }
 generic_ptr::generic_ptr(void *host, void *target, GC_Delegate *delegate_target)
     :host_ptr(host),
       target_ptr(target),
-      target_delegate(delegate_target)
+      delegate_gen(delegate_target)
 {
-    auto post = new PointerRefer(PointerRefer::BUILD, host, this, target, target_delegate);
+    auto post = new PointerRefer(PointerRefer::BUILD, host, this, target, delegate_gen->newins());
     queue->push(post);
 }
 
 generic_ptr::generic_ptr(const generic_ptr &other)
-    :generic_ptr(other.host_ptr, other.target_ptr, other.target_delegate->clone())
+    :generic_ptr(other.host_ptr, other.target_ptr, other.delegate_gen->newins())
 {
     this->operator=(other);
 }
 
 generic_ptr::generic_ptr(generic_ptr &&other)
-    :generic_ptr(other.host_ptr, other.target_ptr, other.target_delegate->clone())
+    :generic_ptr(other.host_ptr, other.target_ptr, other.delegate_gen->newins())
 {
     this->operator=(other);
 }
 
 generic_ptr::~generic_ptr(){
-    if(target_ptr){
-        auto post = new PointerRefer(PointerRefer::CANCEL, host_ptr, this, target_ptr, target_delegate);
-        queue->push(post);
-    }
-}
+    auto post = new PointerRefer(PointerRefer::CANCEL, host_ptr, this, target_ptr, nullptr);
+    queue->push(post);
 
-GC_Delegate *generic_ptr::delegate_of_target() const{
-    return target_delegate;
+    delete delegate_gen;
 }
 
 generic_ptr &generic_ptr::operator=(const generic_ptr &other)
@@ -70,13 +67,15 @@ generic_ptr &generic_ptr::operator=(void *target)
     if(target == target_ptr)
         return *this;
 
-    if(target_ptr){
-        auto post = new PointerRefer(PointerRefer::CANCEL, host_ptr, this, target_ptr, target_delegate);
-        queue->push(post);
-    }
+    auto post = new PointerRefer(PointerRefer::CANCEL, host_ptr, this, target_ptr, nullptr);
+    queue->push(post);
 
     this->target_ptr = target;
-    auto post = new PointerRefer(PointerRefer::BUILD, host_ptr, this, target_ptr, target_delegate);
+    auto del = delegate_gen;
+    this->delegate_gen = this->delegate_gen->newins(target_ptr);
+    delete del;
+
+    post = new PointerRefer(PointerRefer::BUILD, host_ptr, this, target_ptr, delegate_gen->newins());
     queue->push(post);
 
     return *this;
@@ -100,23 +99,21 @@ bool GC_Worker::check_root(std::list<void *> &records, std::list<void*> &remains
 {
     auto _it_ = --remains.cend();
     auto this_node = *_it_;
+    records.push_back(this_node);
+    remains.erase(_it_);
 
-    auto _peer_ = objs_map.find(this_node);
-    if(_peer_ == objs_map.cend()){
+    auto _peer_it = objs_map.find(this_node);
+    if(_peer_it == objs_map.cend()){
         if(this_node != &invilid_node && this_node != &global_object){
             IOStudio::printLine("ERROR:Out of registed except objects<",this_node,">.");
         }
 
         return true;
     }
-    auto this_peer = _peer_->second;
+    auto this_peer = _peer_it->second;
 
-    auto find_result = std::find(records.cbegin(), records.cend(), this_node);
-    if(!this_peer->referfrom.size() && find_result == records.cend())
+    if(!this_peer->referfrom.size() && records.size())
         return true;
-
-    records.push_back(this_node);
-    remains.erase(_it_);
 
     // ================next check====================
     for (auto it=this_peer->referfrom.cbegin(); it != this_peer->referfrom.cend(); ++it) {
@@ -155,7 +152,8 @@ void PointerRefer::exec(std::map<void *, PeerSymbo *> &map)
                     map[this->host_object()] = new PeerSymbo;
                     host_it = map.find(this->host_object());
                 }
-                host_it->second->members[this->smart_pointer()] = this->target_object();
+
+                host_it->second->pointerto[this->smart_pointer()] = this->target_object();
 
                 if(target_it == map.cend()){
                     map[this->target_object()] = new PeerSymbo;
@@ -164,19 +162,28 @@ void PointerRefer::exec(std::map<void *, PeerSymbo *> &map)
 
                 // 引用计数
                 target_it->second->referfrom[this->smart_pointer()] = this->host_object();
+                if(!target_it->second->delegate){
+                    target_it->second->delegate = this->delegate_object();
+                }
+                else {
+                    delete this->delegate_object();
+                }
 
-                IOStudio::printLine("## gc-ReferBuild-target[",this->smart_pointer(),"]\n");
-                PrintStack xx(PrintStack::CODE_MDDOC);
-                xx.exec(map);
+                if(ws::__wether_print_debug_state){
+                    IOStudio::printLine("## gc-ReferBuild-target[",this->smart_pointer(),"]\n");
+                    PrintStack xx(PrintStack::CODE_MDDOC);
+                    xx.exec(map);
+                    IOStudio::printLine("--------------------------------------------------------");
+                }
             }
             break;
         case POINTER_CANCELREF: {
-                if(target_it == map.cend())
+                if(target_it == map.cend() || host_it == map.cend())
                     break;
 
-                auto ptr1 = host_it->second->members.find(this->smart_pointer());
-                if(ptr1 != host_it->second->members.cend())
-                    host_it->second->members.erase(ptr1);
+                auto ptr1 = host_it->second->pointerto.find(this->smart_pointer());
+                if(ptr1 != host_it->second->pointerto.cend())
+                    host_it->second->pointerto.erase(ptr1);
 
                 auto ptr2 = target_it->second->referfrom.find(this->smart_pointer());
                 if(ptr2 != target_it->second->referfrom.cend()){
@@ -184,35 +191,51 @@ void PointerRefer::exec(std::map<void *, PeerSymbo *> &map)
 
                     std::list<void*> records;
                     std::list<void*> remains = {this->target_object()};
-                    if(!target_it->second->referfrom.size() ||
-                       !GC_Worker::check_root(records, remains)){
-                        // 删除实际内存对象
-                        this->delegate_object()->manual_clear();
 
-                        auto peer_obj = target_it->second;
-                        for (auto referto : peer_obj->members) {
-                            auto varit = map.find(referto.second);
-                            if(varit != map.cend()){
-                                varit->second->referfrom.erase(referto.first);
-                            }
-                        }
-                        for (auto referfrom : peer_obj->referfrom) {
-                            auto varit = map.find(referfrom.second);
-                            if(varit != map.cend()){
-                                varit->second->members.erase(referfrom.first);
-                            }
-                        }
+                    // 如果是悬空节点，或者是自洽环
+                    if(!target_it->second->referfrom.size() || !GC_Worker::check_root(records, remains)){
+                        if(!records.size()) records.push_back(this->target_object());
 
-                        // 删除对等对象
-                        delete target_it->second;
-                        // 解除占位
-                        map.erase(target_it);
+                        for (auto delobj : records) {
+                            auto del_itor = map.find(delobj);
+
+                            // 删除实际内存对象
+                            if(del_itor != map.cend()){
+                                del_itor->second->delegate->manual_clear();
+                                delete del_itor->second->delegate;
+                            }
+
+                            // 解除引用关系
+                            auto del_peer = del_itor->second;
+                            for (auto referto : del_peer->pointerto) {
+                                auto varit = map.find(referto.second);
+                                if(varit != map.cend()){
+                                    varit->second->referfrom.erase(referto.first);
+                                }
+                            }
+
+                            // 解除被引用关系
+                            for (auto referfrom : del_peer->referfrom) {
+                                auto varit = map.find(referfrom.second);
+                                if(varit != map.cend()){
+                                    varit->second->pointerto.erase(referfrom.first);
+                                }
+                            }
+
+                            // 删除对等对象
+                            delete del_peer;
+                            // 解除占位
+                            map.erase(delobj);
+                        }
                     }
                 }
 
-                IOStudio::printLine("## gc-ReferCancel-target[",this->smart_pointer(),"]\n");
-                PrintStack xx(PrintStack::CODE_MDDOC);
-                xx.exec(map);
+                if(ws::__wether_print_debug_state){
+                    IOStudio::printLine("## gc-ReferCancel-target[",this->smart_pointer(),"]\n");
+                    PrintStack xx(PrintStack::CODE_MDDOC);
+                    xx.exec(map);
+                    IOStudio::printLine("--------------------------------------------------------");
+                }
             }
             break;
         default:
@@ -242,7 +265,7 @@ void PrintStack::exec(std::map<void *, PeerSymbo *> &map){
         if(node_translate.find(node.first) == node_translate.cend())
                 node_translate[node.first] = "node_"+ std::to_string(node_translate.size());
 
-        for (auto arrow : node.second->members) {
+        for (auto arrow : node.second->pointerto) {
             if(arrow.second == &invilid_node)
                 continue;
 
@@ -287,3 +310,5 @@ void ws::print_gc_stack(StackPrintStyle style){
 void ws::IOStudio::element_print(){}
 
 void ws::IOStudio::element_append(){}
+
+PeerSymbo::PeerSymbo():delegate(nullptr){}

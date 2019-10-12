@@ -8,7 +8,16 @@
 #include "../ecosystem/sync.h"
 #include "../ecosystem/excstream.h"
 
+#ifndef WS_DEBUG_MACRO_TOOLS
+#define WS_DEBUG_MACRO_TOOLS
+#define WS_TURNON_STACK_MESSAGE \
+    ws::__wether_print_debug_state = true;
+#endif
+
+
 namespace ws {
+    extern bool __wether_print_debug_state;
+
     // Pre-DECL
     namespace __internal__implement {
         class generic_ptr;
@@ -22,7 +31,7 @@ namespace ws {
             virtual ~GC_Delegate() = default;
 
             virtual void manual_clear() = 0;
-            virtual GC_Delegate* clone() = 0;
+            virtual GC_Delegate* newins(void* ptr = nullptr) = 0;
         };
 
         // 可执行命令超类
@@ -93,10 +102,11 @@ namespace ws {
 
         class PeerSymbo{
         public:
-            explicit PeerSymbo(){}
+            explicit PeerSymbo();
 
+            GC_Delegate* delegate;
             //  smart_ptr_ref      target_object:pointto
-            std::map<generic_ptr*, void*> members;
+            std::map<generic_ptr*, void*> pointerto;
             //  samrt_ptr_ref      host_object:pointfrom
             std::map<generic_ptr*, void*> referfrom;
         };
@@ -108,8 +118,6 @@ namespace ws {
             generic_ptr(generic_ptr&& other);
             virtual ~generic_ptr();
 
-            GC_Delegate *delegate_of_target() const ;
-
             generic_ptr &operator=(void* target);
             generic_ptr &operator=(const generic_ptr& other);
             void *operator->() const ;
@@ -119,7 +127,7 @@ namespace ws {
         private:
             void *const host_ptr;
             void * target_ptr;
-            GC_Delegate *const target_delegate;
+            GC_Delegate * delegate_gen;
             static sync::BlockingQueue<Command*>* queue;
         };
 
@@ -145,20 +153,19 @@ namespace ws {
             GC_RawWrap(T* host):obj(host){}
             virtual ~GC_RawWrap(){}
 
-            void reset_target(T* p){
-                obj = p;
-            }
-
             virtual void manual_clear(){
                 if(obj) delete obj;
             }
 
-            virtual GC_Delegate* clone(){
-                return new GC_RawWrap(obj);
+            virtual GC_Delegate* newins(void* ptr){
+                if(ptr)
+                    return new GC_RawWrap(static_cast<T*>(ptr));
+                else
+                    return new GC_RawWrap(obj);
             }
 
         private:
-            T* obj;
+            T*const obj;
         };
     }
 
@@ -182,20 +189,13 @@ namespace ws {
         virtual ~smart_ptr() = default;
 
 
-        smart_ptr<T>& operator=(T* target)
-        {
+        smart_ptr<T>& operator=(T* target){
             __internal__implement::generic_ptr::operator=(target);
-
-            static_cast<__internal__implement::GC_RawWrap<T>*>
-                    (delegate_of_target())->reset_target(target);
 
             return *this;
         }
         smart_ptr<T>& operator=(const smart_ptr<T>& other){
             __internal__implement::generic_ptr::operator=(other);
-
-            static_cast<__internal__implement::GC_RawWrap<T>*>
-                    (delegate_of_target())->reset_target(other.operator->());
 
             return *this;
         }
