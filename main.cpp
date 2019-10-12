@@ -8,12 +8,12 @@ class GeObject
 {
 public:
     GeObject()
-        :hold(ws::smart_ptr<GeObject>(this))
+        :hold(ws::smart_ptr<GeObject>(this, nullptr))
     {
-        //cout << "<<GeObjectNew:>>"<< this << endl;
+        //ws::IOStudio::printLine("++sGeObjectNew[",this,"]");
     }
     ~GeObject(){
-        //cout << "<<GeObjectDel:"<< this << endl;
+        //ws::IOStudio::printLine("--GeObjectDel[",this,"]");
     }
 
     void reference(ws::smart_ptr<GeObject> one){
@@ -28,11 +28,11 @@ private:
 
 void test(/*ws::smart_ptr<GeObject> external*/){
     // 新建智能指针
-    ws::smart_ptr<GeObject> c(&ws::global_object);
+    ws::smart_ptr<GeObject> c(&ws::global_object, nullptr);
     // 托管实例指针
     c = new GeObject();
 
-    ws::smart_ptr<GeObject> f(&ws::global_object);
+    ws::smart_ptr<GeObject> f(&ws::global_object, nullptr);
     // 智能指针复制
     f = c;
     // 变更托管指针
@@ -65,8 +65,7 @@ void test(/*ws::smart_ptr<GeObject> external*/){
 int main()
 {
     test();
-    ws::PrintStudio::printLine("TestDone.=====================");
-    ws::print_gc_stack(ws::StackPrintStyle::MD_SNIPPETS);
+    ws::IOStudio::printLine("TestDone.=====================");
     std::cin.get();
     return 0;
 }

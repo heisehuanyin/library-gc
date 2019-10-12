@@ -65,47 +65,29 @@ namespace ws {
             Type type;
         };
 
-        // 智能指针的建立与删除
-        class PointerOver: public Command
-        {
-        public:
-            enum Type{
-                NEW = Command::POINTER_NEW,
-                DEL = Command::POINTER_DEL,
-                CONNEC = Command::POINTER_OBJECTREF,
-                CANCAL = Command::POINTER_CANCELREF
-            };
-            PointerOver(Type type, void* host, generic_ptr* ptr, GC_Delegate* delfree);
-            virtual ~PointerOver() override = default;
-
-            void* host_object();
-            generic_ptr *smart_pointer();
-            GC_Delegate* delegate_object();
-
-            void exec(std::map<void*, PeerSymbo*>& map) override;
-
-        private:
-            generic_ptr*const ptr_mark;
-            void*const host_ptr;
-            GC_Delegate*const delegate_ins;
-        };
         // 智能指针更改指向
-        class PointerRef: public PointerOver
+        class PointerRefer: public Command
         {
         public:
             enum Type{
                 BUILD = Command::POINTER_OBJECTREF,
                 CANCEL = Command::POINTER_CANCELREF
             };
-            PointerRef(Type type, void* host, generic_ptr* ptr, void* target, GC_Delegate* target_degelate);
-            virtual ~PointerRef() override = default;
+            PointerRefer(Type type, void* host, generic_ptr* ptr, void* target, GC_Delegate* target_degelate);
+            virtual ~PointerRefer() override = default;
 
+            void* host_object();
+            generic_ptr* smart_pointer();
             void* target_object();
+            GC_Delegate* delegate_object();
 
             void exec(std::map<void*, PeerSymbo*>& map) override;
 
         private:
-            void*const target;
+            void *const host_ptr;
+            generic_ptr *const pointer;
+            void *const target;
+            GC_Delegate*const delegate_ins;
         };
 
 
@@ -116,12 +98,12 @@ namespace ws {
             //  smart_ptr_ref      target_object:pointto
             std::map<generic_ptr*, void*> members;
             //  samrt_ptr_ref      host_object:pointfrom
-            std::map<generic_ptr*, void*> ref_records;
+            std::map<generic_ptr*, void*> referfrom;
         };
 
         class generic_ptr{
         public:
-            explicit generic_ptr(void *host, GC_Delegate* delegate_target);
+            explicit generic_ptr(void *host, void* target, GC_Delegate* delegate_target);
             generic_ptr(const generic_ptr& other);
             generic_ptr(generic_ptr&& other);
             virtual ~generic_ptr();
@@ -145,15 +127,12 @@ namespace ws {
         {
         public:
             static sync::BlockingQueue<Command*>&& commands;
+            static bool check_root(std::list<void *> &records, std::list<void *> &remains);
 
             GC_Worker();
             ~GC_Worker() = default;
 
             void run();
-
-            static bool check_root(std::list<void *> &records_node,
-                                   std::list<void *> &remain_forks);
-
         private:
             //       original-ptr  all-managed
             static std::map<void*, PeerSymbo*> objs_map;
@@ -189,8 +168,12 @@ namespace ws {
     class smart_ptr : __internal__implement::generic_ptr
     {
     public:
-        explicit smart_ptr(void* host)
-            :generic_ptr(host, new __internal__implement::GC_RawWrap<T>(nullptr)) {}
+        template<typename HostType>
+        explicit smart_ptr(HostType* host, T* target)
+            :generic_ptr(host, target, new __internal__implement::GC_RawWrap<T>(target)) {}
+        template<typename HostType>
+        explicit smart_ptr(HostType* host)
+            :generic_ptr(host, nullptr, new __internal__implement::GC_RawWrap<T>(nullptr)){}
         smart_ptr(const smart_ptr<T>& other)
             :generic_ptr(other){}
         smart_ptr(smart_ptr<T>&& rv)
@@ -233,15 +216,14 @@ namespace ws {
 
     template <typename HostType, typename T>
     smart_ptr<T> gc_wrap(HostType*host, T* target){
-        auto one = smart_ptr<T>(host);
-        return one = target;
+        return smart_ptr<T>(host, target);
     }
 
-    class PrintStudio
+    class IOStudio
     {
     public:
-        PrintStudio() = default;
-        ~PrintStudio() = default;
+        IOStudio() = default;
+        ~IOStudio() = default;
 
         template <typename... Args>
         void appendLineToStack(Args... args){
@@ -262,7 +244,7 @@ namespace ws {
             std::cout << std::endl;
         }
 
-        static void print(PrintStudio& ins){
+        static void print(IOStudio& ins){
             std::lock_guard<std::mutex> locker(global_lock);
 
             for (auto line : ins.lines) {
