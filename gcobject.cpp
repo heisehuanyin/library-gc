@@ -114,6 +114,7 @@ bool GC_Worker::check_root(std::list<void *> &records, std::list<void*> &remains
     auto find_result = std::find(records.cbegin(), records.cend(), this_node);
     if(!this_peer->referfrom.size() && find_result == records.cend())
         return true;
+
     records.push_back(this_node);
     remains.erase(_it_);
 
@@ -181,19 +182,32 @@ void PointerRefer::exec(std::map<void *, PeerSymbo *> &map)
                 if(ptr2 != target_it->second->referfrom.cend()){
                     target_it->second->referfrom.erase(ptr2);
 
-                    /*
-
-                    std::list<void*> records = {this->host_object()};
+                    std::list<void*> records;
                     std::list<void*> remains = {this->target_object()};
                     if(!target_it->second->referfrom.size() ||
                        !GC_Worker::check_root(records, remains)){
                         // 删除实际内存对象
                         this->delegate_object()->manual_clear();
+
+                        auto peer_obj = target_it->second;
+                        for (auto referto : peer_obj->members) {
+                            auto varit = map.find(referto.second);
+                            if(varit != map.cend()){
+                                varit->second->referfrom.erase(referto.first);
+                            }
+                        }
+                        for (auto referfrom : peer_obj->referfrom) {
+                            auto varit = map.find(referfrom.second);
+                            if(varit != map.cend()){
+                                varit->second->members.erase(referfrom.first);
+                            }
+                        }
+
                         // 删除对等对象
                         delete target_it->second;
                         // 解除占位
                         map.erase(target_it);
-                    }*/
+                    }
                 }
 
                 IOStudio::printLine("## gc-ReferCancel-target[",this->smart_pointer(),"]\n");
