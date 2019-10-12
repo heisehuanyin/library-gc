@@ -8,7 +8,16 @@
 #include "../ecosystem/sync.h"
 #include "../ecosystem/excstream.h"
 
+#ifndef WS_DEBUG_MACRO_TOOLS
+#define WS_DEBUG_MACRO_TOOLS
+#define WS_TURNON_STACK_MESSAGE() \
+    ws::__wether_print_debug_state = true;
+#endif
+
+
 namespace ws {
+    extern bool __wether_print_debug_state;
+
     // Pre-DECL
     namespace __internal__implement {
         class generic_ptr;
@@ -22,7 +31,7 @@ namespace ws {
             virtual ~GC_Delegate() = default;
 
             virtual void manual_clear() = 0;
-            virtual GC_Delegate* clone() = 0;
+            virtual GC_Delegate* newins(void* ptr = nullptr) = 0;
         };
 
         // 可执行命令超类
@@ -65,68 +74,49 @@ namespace ws {
             Type type;
         };
 
-        // 智能指针的建立与删除
-        class PointerOver: public Command
-        {
-        public:
-            enum Type{
-                NEW = Command::POINTER_NEW,
-                DEL = Command::POINTER_DEL,
-                CONNEC = Command::POINTER_OBJECTREF,
-                CANCAL = Command::POINTER_CANCELREF
-            };
-            PointerOver(Type type, void* host, generic_ptr* ptr, GC_Delegate* delfree);
-            virtual ~PointerOver() override = default;
-
-            void* host_object();
-            generic_ptr *smart_pointer();
-            GC_Delegate* delegate_object();
-
-            void exec(std::map<void*, PeerSymbo*>& map) override;
-
-        private:
-            generic_ptr*const ptr_mark;
-            void*const host_ptr;
-            GC_Delegate*const delegate_ins;
-        };
         // 智能指针更改指向
-        class PointerRef: public PointerOver
+        class PointerRefer: public Command
         {
         public:
             enum Type{
                 BUILD = Command::POINTER_OBJECTREF,
                 CANCEL = Command::POINTER_CANCELREF
             };
-            PointerRef(Type type, void* host, generic_ptr* ptr, void* target, GC_Delegate* target_degelate);
-            virtual ~PointerRef() override = default;
+            PointerRefer(Type type, void* host, generic_ptr* ptr, void* target, GC_Delegate* target_degelate);
+            virtual ~PointerRefer() override = default;
 
+            void* host_object();
+            generic_ptr* smart_pointer();
             void* target_object();
+            GC_Delegate* delegate_object();
 
             void exec(std::map<void*, PeerSymbo*>& map) override;
 
         private:
-            void*const target;
+            void *const host_ptr;
+            generic_ptr *const pointer;
+            void *const target;
+            GC_Delegate*const delegate_ins;
         };
 
 
         class PeerSymbo{
         public:
-            explicit PeerSymbo(){}
+            explicit PeerSymbo();
 
+            GC_Delegate* delegate;
             //  smart_ptr_ref      target_object:pointto
-            std::map<generic_ptr*, void*> members;
+            std::map<generic_ptr*, void*> pointerto;
             //  samrt_ptr_ref      host_object:pointfrom
-            std::map<generic_ptr*, void*> ref_records;
+            std::map<generic_ptr*, void*> referfrom;
         };
 
         class generic_ptr{
         public:
-            explicit generic_ptr(void *host, GC_Delegate* delegate_target);
+            explicit generic_ptr(void *host, void* target, GC_Delegate* delegate_target);
             generic_ptr(const generic_ptr& other);
             generic_ptr(generic_ptr&& other);
             virtual ~generic_ptr();
-
-            GC_Delegate *delegate_of_target() const ;
 
             generic_ptr &operator=(void* target);
             generic_ptr &operator=(const generic_ptr& other);
@@ -137,7 +127,7 @@ namespace ws {
         private:
             void *const host_ptr;
             void * target_ptr;
-            GC_Delegate *const target_delegate;
+            GC_Delegate * delegate_gen;
             static sync::BlockingQueue<Command*>* queue;
         };
 
@@ -145,15 +135,12 @@ namespace ws {
         {
         public:
             static sync::BlockingQueue<Command*>&& commands;
+            static bool check_root(std::list<void *> &records, std::list<void *> &remains);
 
             GC_Worker();
             ~GC_Worker() = default;
 
             void run();
-
-            static bool check_root(std::list<void *> &records_node,
-                                   std::list<void *> &remain_forks);
-
         private:
             //       original-ptr  all-managed
             static std::map<void*, PeerSymbo*> objs_map;
@@ -166,20 +153,19 @@ namespace ws {
             GC_RawWrap(T* host):obj(host){}
             virtual ~GC_RawWrap(){}
 
-            void reset_target(T* p){
-                obj = p;
-            }
-
             virtual void manual_clear(){
                 if(obj) delete obj;
             }
 
-            virtual GC_Delegate* clone(){
-                return new GC_RawWrap(obj);
+            virtual GC_Delegate* newins(void* ptr){
+                if(ptr)
+                    return new GC_RawWrap(static_cast<T*>(ptr));
+                else
+                    return new GC_RawWrap(obj);
             }
 
         private:
-            T* obj;
+            T*const obj;
         };
     }
 
@@ -189,8 +175,12 @@ namespace ws {
     class smart_ptr : __internal__implement::generic_ptr
     {
     public:
-        explicit smart_ptr(void* host)
-            :generic_ptr(host, new __internal__implement::GC_RawWrap<T>(nullptr)) {}
+        template<typename HostType>
+        explicit smart_ptr(HostType* host, T* target)
+            :generic_ptr(host, target, new __internal__implement::GC_RawWrap<T>(target)) {}
+        template<typename HostType>
+        explicit smart_ptr(HostType* host)
+            :generic_ptr(host, nullptr, new __internal__implement::GC_RawWrap<T>(nullptr)){}
         smart_ptr(const smart_ptr<T>& other)
             :generic_ptr(other){}
         smart_ptr(smart_ptr<T>&& rv)
@@ -199,20 +189,13 @@ namespace ws {
         virtual ~smart_ptr() = default;
 
 
-        smart_ptr<T>& operator=(T* target)
-        {
+        smart_ptr<T>& operator=(T* target){
             __internal__implement::generic_ptr::operator=(target);
-
-            static_cast<__internal__implement::GC_RawWrap<T>*>
-                    (delegate_of_target())->reset_target(target);
 
             return *this;
         }
         smart_ptr<T>& operator=(const smart_ptr<T>& other){
             __internal__implement::generic_ptr::operator=(other);
-
-            static_cast<__internal__implement::GC_RawWrap<T>*>
-                    (delegate_of_target())->reset_target(other.operator->());
 
             return *this;
         }
@@ -233,15 +216,14 @@ namespace ws {
 
     template <typename HostType, typename T>
     smart_ptr<T> gc_wrap(HostType*host, T* target){
-        auto one = smart_ptr<T>(host);
-        return one = target;
+        return smart_ptr<T>(host, target);
     }
 
-    class PrintStudio
+    class IOStudio
     {
     public:
-        PrintStudio() = default;
-        ~PrintStudio() = default;
+        IOStudio() = default;
+        ~IOStudio() = default;
 
         template <typename... Args>
         void appendLineToStack(Args... args){
@@ -262,7 +244,7 @@ namespace ws {
             std::cout << std::endl;
         }
 
-        static void print(PrintStudio& ins){
+        static void print(IOStudio& ins){
             std::lock_guard<std::mutex> locker(global_lock);
 
             for (auto line : ins.lines) {
