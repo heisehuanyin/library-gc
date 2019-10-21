@@ -260,7 +260,8 @@ PrintStack::PrintStack(PrintStack::Type type):Command(Command::Type::PRINT_STACK
 
 void PrintStack::exec(std::map<void *, PeerSymbo *> &map){
     std::map<void*, std::string> node_translate;
-    std::list<std::pair<std::string, generic_ptr*>> arrow_records;
+    IOStudio stack;
+
     for (auto node : map) {
         if(node_translate.find(node.first) == node_translate.cend())
                 node_translate[node.first] = "node_"+ std::to_string(node_translate.size());
@@ -272,8 +273,7 @@ void PrintStack::exec(std::map<void *, PeerSymbo *> &map){
             if(node_translate.find(arrow.second) == node_translate.cend())
                 node_translate[arrow.second] = "node_"+std::to_string(node_translate.size());
 
-            auto item = node_translate[node.first]+"->"+node_translate[arrow.second]+" [label=\"ptr:";
-            arrow_records.push_back(std::make_pair(item, arrow.first));
+            stack.appendLineToStack(node_translate[node.first],"->",node_translate[arrow.second]," [label=\"ptr:", arrow.first,"\"];");
         }
     }
 
@@ -291,9 +291,7 @@ void PrintStack::exec(std::map<void *, PeerSymbo *> &map){
         else
             IOStudio::printLine(node.second, "[label=\"obj:", node.first, "\"]");
     }
-    for (auto item : arrow_records) {
-        IOStudio::printLine(item.first, item.second, "\"];");
-    }
+    IOStudio::stackOut(stack);
     IOStudio::printLine("}");
 
     if(type == Type::CODE_MDDOC)

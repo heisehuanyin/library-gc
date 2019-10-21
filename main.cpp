@@ -4,8 +4,6 @@ using namespace std;
 
 #include "gcobject.h"
 
-#define WS_DEBUG_MACRO_TOOLS
-
 class GeObject
 {
 public:

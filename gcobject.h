@@ -4,6 +4,7 @@
 #include <list>
 #include <map>
 #include <iostream>
+#include <sstream>
 
 #include "../ecosystem/sync.h"
 #include "../ecosystem/excstream.h"
@@ -244,7 +245,7 @@ namespace ws {
             std::cout << std::endl;
         }
 
-        static void print(IOStudio& ins){
+        static void stackOut(IOStudio& ins){
             std::lock_guard<std::mutex> locker(global_lock);
 
             for (auto line : ins.lines) {
@@ -267,10 +268,11 @@ namespace ws {
         template<typename T, typename... Args>
         void element_append(T first, Args... args){
             auto item_it = --lines.end();
-            auto item = *item_it;
-            item += std::to_string(first);
-            lines.insert(item_it, item);
-            lines.erase(++item_it);
+            std::ostringstream out;
+            out << *item_it;
+            out << first;
+            lines.insert(item_it, out.str());
+            lines.erase(item_it);
 
             element_append(args...);
         }
